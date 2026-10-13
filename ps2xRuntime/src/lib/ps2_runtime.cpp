@@ -1,4 +1,6 @@
 #include "ps2_runtime.h"
+#include <cstdio>
+#include <unordered_set>
 #include <cstdlib>
 #include "ps2_log.h"
 #include "ps2_stubs.h"
@@ -1358,6 +1360,27 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
 {
     ctx->pc = targetPc;
     const bool isCall = (kind == GuestBranchKind::DirectCall || kind == GuestBranchKind::IndirectCall);
+
+    // PS2X_TRACE_CALLS="0xADDR,0xADDR": logs the first calls to those guest addresses (debug aid).
+    static const std::unordered_set<uint32_t> tracedCalls = []()
+    {
+        std::unordered_set<uint32_t> set;
+        if (const char *spec = std::getenv("PS2X_TRACE_CALLS"))
+        {
+            std::stringstream ss(spec);
+            std::string item;
+            while (std::getline(ss, item, ','))
+                set.insert(static_cast<uint32_t>(std::strtoul(item.c_str(), nullptr, 0)));
+        }
+        return set;
+    }();
+    if (isCall && !tracedCalls.empty() && tracedCalls.count(targetPc) != 0)
+    {
+        static std::atomic<int> tracedPrinted{0};
+        if (tracedPrinted.fetch_add(1) < 400)
+            std::fprintf(stderr, "[call] %x a0=%x a1=%x a2=%x a3=%x s0=%x ra=%x\n", targetPc, GPR_U32(ctx, 4), GPR_U32(ctx, 5),
+                         GPR_U32(ctx, 6), GPR_U32(ctx, 7), GPR_U32(ctx, 16), sourcePc);
+    }
 
     // Every inter-function transfer is also a deterministic EE safe point.
     // Backward edges inside generated functions use eeCheckpointDue(), while
