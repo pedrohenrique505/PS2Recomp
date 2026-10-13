@@ -1,4 +1,5 @@
 #include "ps2_runtime.h"
+#include <cstdlib>
 #include "ps2_log.h"
 #include "ps2_stubs.h"
 #include "ps2_syscalls.h"
@@ -2391,8 +2392,25 @@ void PS2Runtime::run()
         gameThreadFinished.store(true, std::memory_order_release); });
 
     uint64_t tick = 0;
+    // PS2X_DUMP_RAM="seconds:path": writes the 32MB EE RAM once after that many seconds (debug aid).
+    const char *dumpRamSpec = std::getenv("PS2X_DUMP_RAM");
+    const auto dumpRamStart = std::chrono::steady_clock::now();
+    bool dumpRamDone = (dumpRamSpec == nullptr);
     while (!isStopRequested() && !gameThreadFinished.load(std::memory_order_acquire))
     {
+        if (!dumpRamDone)
+        {
+            const std::string spec(dumpRamSpec);
+            const size_t colon = spec.find(':');
+            const double secs = std::atof(spec.substr(0, colon).c_str());
+            if (colon != std::string::npos &&
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - dumpRamStart).count() >= secs)
+            {
+                std::ofstream out(spec.substr(colon + 1), std::ios::binary);
+                out.write(reinterpret_cast<const char *>(m_memory.getRDRAM()), PS2_RAM_SIZE);
+                dumpRamDone = true;
+            }
+        }
         PS2_IF_AGRESSIVE_LOGS({
             tick++;
             if ((tick % 120) == 0)
