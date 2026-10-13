@@ -668,70 +668,88 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
         }
     });
 
+    // O DMA em cadeia entrega a tag e os dados em pacotes separados, entao o
+    // estado da tag corrente sobrevive entre chamadas (m_gifResume).
+    GifResume &st = m_gifResume;
     uint32_t offset = 0;
-    while (offset + 16 <= sizeBytes)
+    while (offset < sizeBytes)
     {
-        uint64_t tagLo = loadLE64(data + offset);
-        uint64_t tagHi = loadLE64(data + offset + 8);
-        offset += 16;
-
-        m_curQ = 1.0f;
-
-        uint32_t nloop = static_cast<uint32_t>(tagLo & 0x7FFF);
-        uint8_t flg = static_cast<uint8_t>((tagLo >> 58) & 0x3);
-        uint32_t nreg = static_cast<uint32_t>((tagLo >> 60) & 0xF);
-        if (nreg == 0)
-            nreg = 16;
-
-        recordGifTagDebugEventUnlocked(sizeBytes, nloop, flg, nreg);
-
-        bool pre = ((tagLo >> 46) & 1) != 0;
-        if (pre)
+        if (!st.active)
         {
-            writeRegisterUnlocked(GS_REG_PRIM, (tagLo >> 47) & 0x7FF);
+            if (offset + 16 > sizeBytes)
+                return;
+            const uint64_t tagLo = loadLE64(data + offset);
+            const uint64_t tagHi = loadLE64(data + offset + 8);
+            offset += 16;
+
+            m_curQ = 1.0f;
+
+            const uint32_t nloop = static_cast<uint32_t>(tagLo & 0x7FFF);
+            const uint8_t flg = static_cast<uint8_t>((tagLo >> 58) & 0x3);
+            uint32_t nreg = static_cast<uint32_t>((tagLo >> 60) & 0xF);
+            if (nreg == 0)
+                nreg = 16;
+
+            recordGifTagDebugEventUnlocked(sizeBytes, nloop, flg, nreg);
+
+            if ((tagLo >> 46) & 1)
+                writeRegisterUnlocked(GS_REG_PRIM, (tagLo >> 47) & 0x7FF);
+
+            for (uint32_t i = 0; i < nreg; ++i)
+                st.regs[i] = static_cast<uint8_t>((tagHi >> (i * 4)) & 0xF);
+            st.flg = flg;
+            st.nreg = nreg;
+            st.regIdx = 0;
+            st.loopsLeft = nloop;
+            st.padBytes = (flg != GIF_FMT_PACKED && flg != GIF_FMT_IMAGE && ((nloop * nreg) & 1)) ? 8u : 0u;
+            st.active = nloop != 0;
+            continue;
         }
 
-        uint8_t regs[16];
-        for (uint32_t i = 0; i < nreg; ++i)
-            regs[i] = static_cast<uint8_t>((tagHi >> (i * 4)) & 0xF);
-
-        if (flg == GIF_FMT_PACKED)
+        if (st.flg == GIF_FMT_PACKED)
         {
-            for (uint32_t loop = 0; loop < nloop; ++loop)
+            while (st.loopsLeft && offset + 16 <= sizeBytes)
             {
-                for (uint32_t r = 0; r < nreg; ++r)
+                writeRegisterPacked(st.regs[st.regIdx], loadLE64(data + offset), loadLE64(data + offset + 8));
+                offset += 16;
+                if (++st.regIdx == st.nreg)
                 {
-                    if (offset + 16 > sizeBytes)
-                        return;
-                    uint64_t lo = loadLE64(data + offset);
-                    uint64_t hi = loadLE64(data + offset + 8);
-                    offset += 16;
-                    writeRegisterPacked(regs[r], lo, hi);
+                    st.regIdx = 0;
+                    --st.loopsLeft;
                 }
             }
         }
-        else if (flg == GIF_FMT_REGLIST)
+        else if (st.flg == GIF_FMT_IMAGE)
         {
-            for (uint32_t loop = 0; loop < nloop; ++loop)
+            const uint32_t qw = std::min<uint32_t>(st.loopsLeft, (sizeBytes - offset) / 16);
+            if (qw == 0)
+                return;
+            processImageData(data + offset, qw * 16);
+            offset += qw * 16;
+            st.loopsLeft -= qw;
+        }
+        else
+        {
+            while (st.loopsLeft && offset + 8 <= sizeBytes)
             {
-                for (uint32_t r = 0; r < nreg; ++r)
-                {
-                    if (offset + 8 > sizeBytes)
-                        return;
-                    writeRegisterUnlocked(regs[r], loadLE64(data + offset));
-                    offset += 8;
-                }
-            }
-            if ((nloop * nreg) & 1)
+                writeRegisterUnlocked(st.regs[st.regIdx], loadLE64(data + offset));
                 offset += 8;
+                if (++st.regIdx == st.nreg)
+                {
+                    st.regIdx = 0;
+                    --st.loopsLeft;
+                }
+            }
         }
-        else if (flg == GIF_FMT_IMAGE)
+
+        if (st.loopsLeft == 0)
         {
-            uint32_t imageBytes = nloop * 16;
-            if (offset + imageBytes > sizeBytes)
-                imageBytes = sizeBytes - offset;
-            processImageData(data + offset, imageBytes);
-            offset += imageBytes;
+            offset += std::min(st.padBytes, sizeBytes - offset);
+            st.active = false;
+        }
+        else
+        {
+            return; // pacote acabou no meio da tag
         }
     }
 }

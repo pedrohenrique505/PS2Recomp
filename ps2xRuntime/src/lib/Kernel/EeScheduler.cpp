@@ -106,6 +106,7 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
     m_dmacTailOrder = 1000;
     m_enabledIntcMask = 0xFFFFFFFFu;
     m_enabledDmacMask = 0xFFFFFFFFu;
+    m_pendingDmacCauses = 0u;
     m_currentThreadId = 0;
     m_rescheduleRequested = false;
     m_timeSliceExpired = false;
@@ -1245,6 +1246,11 @@ int EeScheduler::setIrqCauseEnabled(bool dmac, uint32_t cause, bool enabled)
         if (enabled)
         {
             mask |= 1u << cause;
+            if (dmac && (m_pendingDmacCauses & (1u << cause)) != 0u)
+            {
+                m_pendingDmacCauses &= ~(1u << cause);
+                dispatchIrq(true, cause);
+            }
         }
         else
         {
@@ -1260,6 +1266,8 @@ void EeScheduler::dispatchIrq(bool dmac, uint32_t cause)
     const uint32_t mask = dmac ? m_enabledDmacMask : m_enabledIntcMask;
     if (cause < 32u && (mask & (1u << cause)) == 0u)
     {
+        if (dmac)
+            m_pendingDmacCauses |= 1u << cause;
         return;
     }
     const auto &handlers = dmac ? m_dmacHandlers : m_intcHandlers;

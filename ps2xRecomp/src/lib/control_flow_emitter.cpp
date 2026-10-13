@@ -435,6 +435,14 @@ namespace ps2recomp
                            : "(ctx->fcr31 & 0x800000)";
             }
             break;
+        case OPCODE_COP0:
+            if (m_branchInst.rs == COP0_BC)
+            {
+                // shortcut: CPCOND0 fixo em "DMA ocioso" porque o runtime conclui os DMAs na hora; modelar D_PCR se isso mudar.
+                const uint8_t bcCond = static_cast<uint8_t>(m_branchInst.rt);
+                return (bcCond == COP0_BC_BCF || bcCond == COP0_BC_BCFL) ? "false" : "true";
+            }
+            break;
         case OPCODE_COP2:
             if (m_branchInst.rs == COP2_BC)
             {

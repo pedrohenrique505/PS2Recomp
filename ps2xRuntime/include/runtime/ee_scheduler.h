@@ -420,6 +420,7 @@ private:
     int m_dmacTailOrder = 1000;
     uint32_t m_enabledIntcMask = 0xFFFFFFFFu;
     uint32_t m_enabledDmacMask = 0xFFFFFFFFu;
+    uint32_t m_pendingDmacCauses = 0u; // D_STAT latcha a causa enquanto desabilitada; entrega no EnableDmac
     int m_currentThreadId = 0;
     bool m_rescheduleRequested = false;
     bool m_timeSliceExpired = false;
