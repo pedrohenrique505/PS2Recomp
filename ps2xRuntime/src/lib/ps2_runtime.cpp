@@ -1065,6 +1065,11 @@ void PS2Runtime::configureIoPathsFromElf(const std::string &elfPath)
         paths.mcRoot = paths.elfDirectory / "mc0";
     }
 
+    if (const char *image = std::getenv("PS2X_CD_IMAGE"))
+    {
+        paths.cdImage = image;
+    }
+
     setIoPaths(paths);
 }
 

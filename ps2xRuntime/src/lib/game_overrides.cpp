@@ -6,7 +6,9 @@
 #include "ps2_log.h"
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <optional>
@@ -125,6 +127,27 @@ namespace ps2_game_overrides
                        uint32_t fileCrc32,
                        bool fileCrcValid)
     {
+        // PS2X_BINDS: text file, one "handler@0xADDR" per line ('#' starts a comment).
+        // Rebinds without regenerating or rebuilding the recompiled game.
+        // shortcut: applies to whichever ELF is loaded, no CRC check; fine while there is one game.
+        if (const char *bindsPath = std::getenv("PS2X_BINDS"))
+        {
+            std::ifstream in(bindsPath);
+            std::string line;
+            while (std::getline(in, line))
+            {
+                line = line.substr(0, line.find('#'));
+                line.erase(std::remove_if(line.begin(), line.end(), [](unsigned char c) { return std::isspace(c); }), line.end());
+                const size_t at = line.rfind('@');
+                if (at == std::string::npos)
+                {
+                    continue;
+                }
+                bindAddressHandler(runtime, static_cast<uint32_t>(std::strtoul(line.c_str() + at + 1, nullptr, 0)),
+                                   std::string_view(line).substr(0, at));
+            }
+        }
+
 
         std::vector<Descriptor> descriptors;
         {
