@@ -610,7 +610,18 @@ void PS2Runtime::notifyIopSifTransfer(uint8_t *rdram, const ps2x::iop::SifTransf
 
 void PS2Runtime::advanceIopEeCycles(uint64_t eeCycles) noexcept
 {
-    m_iopSubsystem->runEeCycles(eeCycles);
+    // The EE scheduler reports a few cycles per guest call; running the IOP scheduler for each of
+    // them dominated the profile. Batch them. shortcut: only the EE executor calls this, so the
+    // counter is unsynchronized; the IOP lags by at most kIopBatchEeCycles (microseconds).
+    constexpr uint64_t kIopBatchEeCycles = 4096u;
+    static uint64_t pendingEeCycles = 0u;
+    pendingEeCycles += eeCycles;
+    if (pendingEeCycles >= kIopBatchEeCycles)
+    {
+        const uint64_t batch = pendingEeCycles;
+        pendingEeCycles = 0u;
+        m_iopSubsystem->runEeCycles(batch);
+    }
 }
 
 void PS2Runtime::resetIop()

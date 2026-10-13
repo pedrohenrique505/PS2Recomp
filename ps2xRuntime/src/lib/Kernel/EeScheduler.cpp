@@ -141,11 +141,13 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
     // returned by ReferThreadStatus. SetupThread records that metadata.
     main.stack = 0u;
     main.gp = getRegU32(&mainContext, 28);
-    main.initialPriority = 0;
-    main.currentPriority = 0;
+    // The real BIOS runs the user main thread at priority 1 (PCSX2 thread list), and accepts
+    // priority 0 for user threads, so priority 0 is not reserved for the main thread.
+    main.initialPriority = 1;
+    main.currentPriority = 1;
     main.status = EeThreadStatus::Ready;
     m_threads.emplace(main.id, std::move(main));
-    m_readyQueues[0].push_back(kMainThreadId);
+    m_readyQueues[1].push_back(kMainThreadId);
     scheduleEvent(m_eeCycle + kVBlankPeriodCycles,
                   std::chrono::steady_clock::now() + kVBlankPeriod,
                   EeEvent{EeEventType::VBlankStart, 0, 0});
@@ -423,7 +425,7 @@ void EeScheduler::setupCurrentThread(uint32_t stack, uint32_t stackSize, uint32_
 int EeScheduler::createThread(const EeThreadCreateParams &params)
 {
     assertExecutor();
-    if (params.priority < 1 || params.priority >= kPriorityCount)
+    if (params.priority < 0 || params.priority >= kPriorityCount)
     {
         return KE_ILLEGAL_PRIORITY;
     }
@@ -701,7 +703,7 @@ int EeScheduler::cancelWakeup(int id)
 int EeScheduler::changePriority(int id, int priority, bool interruptSafe, int &oldPriority)
 {
     assertExecutor();
-    if (priority < 1 || priority >= kPriorityCount)
+    if (priority < 0 || priority >= kPriorityCount)
     {
         return KE_ILLEGAL_PRIORITY;
     }

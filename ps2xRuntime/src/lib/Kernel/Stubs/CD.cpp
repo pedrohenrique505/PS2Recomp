@@ -316,8 +316,12 @@ namespace ps2_stubs
         if (ok)
         {
             g_cdStreamingLbn = selected.lbn + selected.sectors;
-            setReturnS32(ctx, 1); // command accepted/success
-            return;
+            // A real read takes time: block the caller until the next frame so lower-priority
+            // threads (e.g. a worker the game just started) run, then return 1 (accepted).
+            // Resume at the caller: generated wrappers set pc = ra, but a stub bound by address
+            // (replaceFunction) is entered with pc = its own address.
+            ctx->pc = getRegU32(ctx, 31);
+            runtime->eeScheduler().waitVSync(runtime->eeScheduler().currentVSyncTick(), 1);
         }
 
         setReturnS32(ctx, 0);
