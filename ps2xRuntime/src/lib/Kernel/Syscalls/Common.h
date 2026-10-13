@@ -22,6 +22,7 @@
 #include <ctime>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -83,4 +84,21 @@ template <typename T>
 inline T *getEeGuestStruct(uint8_t *rdram, uint32_t address)
 {
     return const_cast<T *>(getEeGuestStruct<T>(static_cast<const uint8_t *>(rdram), address));
+}
+
+// PS2X_TRACE_SYSCALLS=1: prints the first calls of thread/semaphore/interrupt syscalls (debug aid).
+inline void traceSyscall(const char *name, const R5900Context *ctx)
+{
+    static const bool enabled = std::getenv("PS2X_TRACE_SYSCALLS") != nullptr;
+    static std::atomic<int> printed{0};
+    if (!enabled)
+        return;
+    const std::string_view n(name);
+    if (n == "FlushCache" || n == "iFlushCache" || n == "EnableDmac" || n == "DisableDmac" || n == "GetThreadId")
+        return;
+    if (printed.fetch_add(1) >= 3000)
+        return;
+    std::fprintf(stderr, "[syscall] %s a0=%x a1=%x a2=%x a3=%x ra=%x\n", name, getRegU32(const_cast<R5900Context *>(ctx), 4),
+                 getRegU32(const_cast<R5900Context *>(ctx), 5), getRegU32(const_cast<R5900Context *>(ctx), 6),
+                 getRegU32(const_cast<R5900Context *>(ctx), 7), getRegU32(const_cast<R5900Context *>(ctx), 31));
 }

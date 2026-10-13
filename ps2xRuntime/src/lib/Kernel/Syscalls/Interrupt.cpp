@@ -83,6 +83,7 @@ namespace ps2_syscalls
 
     void SetVSyncFlag(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("SetVSyncFlag", ctx);
         const uint32_t flagAddress = getRegU32(ctx, 4);
         const uint32_t tickAddress = getRegU32(ctx, 5);
         if ((flagAddress != 0u && !getEeGuestStruct<uint32_t>(rdram, flagAddress)) ||
@@ -97,91 +98,109 @@ namespace ps2_syscalls
 
     void EnableIntc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("EnableIntc", ctx);
         setCauseEnabled(rdram, ctx, runtime, false, true);
     }
 
     void iEnableIntc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iEnableIntc", ctx);
         EnableIntc(rdram, ctx, runtime);
     }
 
     void DisableIntc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("DisableIntc", ctx);
         setCauseEnabled(rdram, ctx, runtime, false, false);
     }
 
     void iDisableIntc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iDisableIntc", ctx);
         DisableIntc(rdram, ctx, runtime);
     }
 
     void AddIntcHandler(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("AddIntcHandler", ctx);
         addHandler(rdram, ctx, runtime, false);
     }
 
     void AddIntcHandler2(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("AddIntcHandler2", ctx);
         AddIntcHandler(rdram, ctx, runtime);
     }
 
     void RemoveIntcHandler(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("RemoveIntcHandler", ctx);
         removeHandler(rdram, ctx, runtime, false);
     }
 
     void AddDmacHandler(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("AddDmacHandler", ctx);
         addHandler(rdram, ctx, runtime, true);
     }
 
     void AddDmacHandler2(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("AddDmacHandler2", ctx);
         AddDmacHandler(rdram, ctx, runtime);
     }
 
     void RemoveDmacHandler(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("RemoveDmacHandler", ctx);
         removeHandler(rdram, ctx, runtime, true);
     }
 
     void EnableIntcHandler(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("EnableIntcHandler", ctx);
         setHandlerEnabled(rdram, ctx, runtime, false, true);
     }
 
     void DisableIntcHandler(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("DisableIntcHandler", ctx);
         setHandlerEnabled(rdram, ctx, runtime, false, false);
     }
 
     void EnableDmacHandler(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("EnableDmacHandler", ctx);
         setHandlerEnabled(rdram, ctx, runtime, true, true);
     }
 
     void DisableDmacHandler(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("DisableDmacHandler", ctx);
         setHandlerEnabled(rdram, ctx, runtime, true, false);
     }
 
     void EnableDmac(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("EnableDmac", ctx);
         setCauseEnabled(rdram, ctx, runtime, true, true);
     }
 
     void iEnableDmac(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iEnableDmac", ctx);
         EnableDmac(rdram, ctx, runtime);
     }
 
     void DisableDmac(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("DisableDmac", ctx);
         setCauseEnabled(rdram, ctx, runtime, true, false);
     }
 
     void iDisableDmac(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iDisableDmac", ctx);
         DisableDmac(rdram, ctx, runtime);
     }
 }

@@ -68,6 +68,7 @@ namespace ps2_syscalls
 
     void CreateSema(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("CreateSema", ctx);
         const uint32_t address = getRegU32(ctx, 4);
         const auto *param = address == 0u ? nullptr : getEeGuestStruct<ee_sema_t>(rdram, address);
         if (!param)
@@ -88,42 +89,50 @@ namespace ps2_syscalls
 
     void DeleteSema(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("DeleteSema", ctx);
         deleteSemaphoreImpl(rdram, ctx, runtime, false);
     }
 
     void iDeleteSema(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iDeleteSema", ctx);
         deleteSemaphoreImpl(rdram, ctx, runtime, true);
     }
 
     void SignalSema(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("SignalSema", ctx);
         signalSemaphoreImpl(rdram, ctx, runtime, false);
     }
 
     void iSignalSema(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iSignalSema", ctx);
         signalSemaphoreImpl(rdram, ctx, runtime, true);
     }
 
     void WaitSema(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("WaitSema", ctx);
         scheduler(rdram, ctx, runtime).waitSemaphore(static_cast<int>(getRegU32(ctx, 4)));
     }
 
     void PollSema(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("PollSema", ctx);
         setReturnS32(ctx,
                      scheduler(rdram, ctx, runtime).pollSemaphore(static_cast<int>(getRegU32(ctx, 4))));
     }
 
     void iPollSema(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iPollSema", ctx);
         PollSema(rdram, ctx, runtime);
     }
 
     void ReferSemaStatus(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("ReferSemaStatus", ctx);
         EeScheduler &ee = scheduler(rdram, ctx, runtime);
         const EeSemaphore *semaphore = ee.semaphore(static_cast<int>(getRegU32(ctx, 4)));
         if (!semaphore)
@@ -148,11 +157,13 @@ namespace ps2_syscalls
 
     void iReferSemaStatus(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iReferSemaStatus", ctx);
         ReferSemaStatus(rdram, ctx, runtime);
     }
 
     void CreateEventFlag(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("CreateEventFlag", ctx);
         struct EeEventFlagParam
         {
             uint32_t attr;
@@ -172,26 +183,31 @@ namespace ps2_syscalls
 
     void DeleteEventFlag(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("DeleteEventFlag", ctx);
         deleteEventFlagImpl(rdram, ctx, runtime, false);
     }
 
     void iDeleteEventFlag(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iDeleteEventFlag", ctx);
         deleteEventFlagImpl(rdram, ctx, runtime, true);
     }
 
     void SetEventFlag(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("SetEventFlag", ctx);
         setEventFlagImpl(rdram, ctx, runtime, false);
     }
 
     void iSetEventFlag(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iSetEventFlag", ctx);
         setEventFlagImpl(rdram, ctx, runtime, true);
     }
 
     void ClearEventFlag(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("ClearEventFlag", ctx);
         setReturnS32(ctx,
                      scheduler(rdram, ctx, runtime)
                          .clearEventFlag(static_cast<int>(getRegU32(ctx, 4)), getRegU32(ctx, 5)));
@@ -199,11 +215,13 @@ namespace ps2_syscalls
 
     void iClearEventFlag(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iClearEventFlag", ctx);
         ClearEventFlag(rdram, ctx, runtime);
     }
 
     void WaitEventFlag(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("WaitEventFlag", ctx);
         const int id = static_cast<int>(getRegU32(ctx, 4));
         const uint32_t bits = getRegU32(ctx, 5);
         const uint32_t mode = getRegU32(ctx, 6);
@@ -240,6 +258,7 @@ namespace ps2_syscalls
 
     void PollEventFlag(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("PollEventFlag", ctx);
         const int id = static_cast<int>(getRegU32(ctx, 4));
         const uint32_t bits = getRegU32(ctx, 5);
         const uint32_t mode = getRegU32(ctx, 6);
@@ -286,11 +305,13 @@ namespace ps2_syscalls
 
     void iPollEventFlag(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iPollEventFlag", ctx);
         PollEventFlag(rdram, ctx, runtime);
     }
 
     void ReferEventFlagStatus(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("ReferEventFlagStatus", ctx);
         struct EeEventFlagStatus
         {
             uint32_t attr;
@@ -327,11 +348,13 @@ namespace ps2_syscalls
 
     void iReferEventFlagStatus(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iReferEventFlagStatus", ctx);
         ReferEventFlagStatus(rdram, ctx, runtime);
     }
 
     void SetAlarm(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("SetAlarm", ctx);
         setReturnS32(ctx,
                      scheduler(rdram, ctx, runtime)
                          .setAlarm(static_cast<uint16_t>(getRegU32(ctx, 4)),
@@ -343,32 +366,38 @@ namespace ps2_syscalls
 
     void InitAlarm(uint8_t *, R5900Context *ctx, PS2Runtime *)
     {
+        traceSyscall("InitAlarm", ctx);
         setReturnS32(ctx, KE_OK);
     }
 
     void iSetAlarm(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iSetAlarm", ctx);
         SetAlarm(rdram, ctx, runtime);
     }
 
     void CancelAlarm(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("CancelAlarm", ctx);
         setReturnS32(ctx,
                      scheduler(rdram, ctx, runtime).cancelAlarm(static_cast<int>(getRegU32(ctx, 4))));
     }
 
     void iCancelAlarm(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iCancelAlarm", ctx);
         CancelAlarm(rdram, ctx, runtime);
     }
 
     void ReleaseAlarm(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("ReleaseAlarm", ctx);
         CancelAlarm(rdram, ctx, runtime);
     }
 
     void iReleaseAlarm(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        traceSyscall("iReleaseAlarm", ctx);
         CancelAlarm(rdram, ctx, runtime);
     }
 }
