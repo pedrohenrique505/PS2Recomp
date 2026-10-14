@@ -286,6 +286,9 @@ private:
     uint64_t calculatePairReadyCycle(const DecodedInstructionPair &decoded) const;
     void markPairWrites(const DecodedInstructionPair &decoded);
     bool pipelinesPending() const;
+    // Menor readyCycle entre as entradas pendentes (conservador: nunca maior que o real).
+    uint64_t m_nextReady = 0;
+    void noteReady(uint64_t c) { if (c < m_nextReady) m_nextReady = c; }
 
     float normalizeOperand(float value) const;
     float normalizeResult(float value, uint32_t &laneFlags) const;

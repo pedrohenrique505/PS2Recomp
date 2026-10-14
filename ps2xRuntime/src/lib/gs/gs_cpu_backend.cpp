@@ -1,3 +1,4 @@
+#pragma GCC optimize("O3")
 #include "runtime/gs/gs_cpu_backend.h"
 #include "runtime/gs/ps2_gs_common.h"
 #include "runtime/gs/ps2_gs_psmct16.h"
@@ -7,10 +8,14 @@
 #include "runtime/gs/ps2_gs_memory.h"
 #include "ps2_log.h"
 #include <atomic>
+#include <vector>
+#include <cstdlib>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <atomic>
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -296,7 +301,7 @@ namespace
     {
         const float top = static_cast<float>(c00) + (static_cast<float>(c10) - static_cast<float>(c00)) * fx;
         const float bottom = static_cast<float>(c01) + (static_cast<float>(c11) - static_cast<float>(c01)) * fx;
-        return clampU8(static_cast<int>(std::lround(top + (bottom - top) * fy)));
+        return clampU8(static_cast<int>(static_cast<double>(top + (bottom - top) * fy) + 0.5)); // = lround para valores >= 0, sem chamada de funcao
     }
 }
 
@@ -533,6 +538,7 @@ void GSCpuBackend::Reset()
 void GSCpuBackend::ResetUnlocked()
 {
     m_clut.fill(0u);
+    m_clutMemoSig = ~0ull;
     m_clutCbp.fill(0u);
     m_texturePageCache.Invalidate();
     m_transfer = {};
@@ -543,8 +549,17 @@ void GSCpuBackend::ResetUnlocked()
     m_localToHostReadPos = 0u;
 }
 
+std::atomic<uint64_t> g_gsSubmitNs{0}; // PS2X_PROF: tempo acumulado no rasterizador
+static const bool g_gsProf = std::getenv("PS2X_PROF") != nullptr;
+
 void GSCpuBackend::Submit(const GSPrimitiveBatch &batch)
 {
+    struct Timer
+    {
+        std::chrono::steady_clock::time_point t0;
+        Timer() { if (g_gsProf) t0 = std::chrono::steady_clock::now(); }
+        ~Timer() { if (g_gsProf) g_gsSubmitNs += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count(); }
+    } timer;
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_vram || batch.vertexCount == 0u)
         return;
@@ -623,6 +638,7 @@ void GSCpuBackend::LoadClutUnlocked(const GSTex0Reg &tex0, const GSTexClutReg &t
         }
 
         const uint32_t raw = ReadTextureVramUnlocked(tex0.cpsm, tex0.cbp, sourceWidth, sourceX, sourceY); 
+        m_clutMemoSig = ~0ull;
         const uint32_t destination = (loadCsm1Suffix ? entry : destinationBase + entry) & (sixteenBit ? 0x1FFu : 0x0FFu);
         if (sixteenBit)
         {
@@ -1012,7 +1028,27 @@ void GSCpuBackend::WritePixel(const GSDrawState &state, int x, int y, int z, uin
     }
 }
 
-uint32_t GSCpuBackend::LookupCLUT(const GSDrawState &state,
+uint32_t GSCpuBackend::LookupCLUT(const GSDrawState &state, uint8_t index, uint8_t cpsm, uint8_t csm, uint8_t csa, uint8_t sourcePsm)
+{
+    // A paleta nao muda durante um desenho: memoriza o resultado por indice enquanto a configuracao for a mesma.
+    const uint64_t sig = static_cast<uint64_t>(cpsm) | (static_cast<uint64_t>(csm) << 8) | (static_cast<uint64_t>(csa) << 16) |
+                         (static_cast<uint64_t>(sourcePsm) << 24) | (static_cast<uint64_t>(state.texa.ta0) << 32) |
+                         (static_cast<uint64_t>(state.texa.ta1) << 40) | (static_cast<uint64_t>(state.texa.aem) << 48);
+    if (sig != m_clutMemoSig)
+    {
+        m_clutMemoSig = sig;
+        m_clutMemoValid.fill(false);
+    }
+    const uint32_t slot = isFourBitIndexedPsm(sourcePsm) ? (index & 0x0Fu) : index;
+    if (!m_clutMemoValid[slot])
+    {
+        m_clutMemo[slot] = LookupCLUTUncached(state, index, cpsm, csm, csa, sourcePsm);
+        m_clutMemoValid[slot] = true;
+    }
+    return m_clutMemo[slot];
+}
+
+uint32_t GSCpuBackend::LookupCLUTUncached(const GSDrawState &state,
                                   uint8_t index,
                                   uint8_t cpsm,
                                   uint8_t csm,
@@ -1269,6 +1305,35 @@ void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
     }
     else
     {
+        // Caminho rapido: preenchimento solido (limpeza de tela/Z) sem fog, blend, mascara,
+        // teste de alpha no destino nem teste de Z. O resultado e o mesmo do WritePixel.
+        const u32 fpsm = ctx.frame.psm;
+        const PixelWriteMask mask = classifyAlphaTest(ctx.test, a, static_cast<uint8_t>(fpsm));
+        const bool simple = m_vram && !state.prim.fge && !state.prim.abe && ctx.frame.fbmsk == 0 &&
+                            ((ctx.test >> 14) & 0x1u) == 0u && ((ctx.test >> 17) & 3u) == 1u &&
+                            !(mask.writeRgb && !mask.writeAlpha && fpsm == GS_PSM_CT32);
+        if (simple)
+        {
+            if (!mask.writesAnything())
+                return;
+            const u32 fbp = GSInternal::framePageBaseToBlock(ctx.frame.fbp);
+            const u32 fbw = std::max<u32>(ctx.frame.fbw, 1u);
+            const u32 zbp = GSInternal::framePageBaseToBlock(ctx.zbuf.zbp);
+            const u32 zpsm = ctx.zbuf.psm;
+            const bool writeFb = mask.writesFramebuffer();
+            const bool writeZ = mask.writeDepth && !ctx.zbuf.zmask;
+            uint8_t fa = a;
+            if (mask.writeAlpha && (ctx.fba & 0x1ull) != 0ull && fpsm != GS_PSM_CT24)
+                fa = static_cast<uint8_t>(fa | 0x80u);
+            u32 pixel = pack32(r, g, b, fa);
+            if (bitsPerPixel(fpsm) == 16)
+                pixel = Rgba8888ToRgba5551(pixel);
+            if (writeFb)
+                GSMem::FillRect(m_vram, fpsm, fbp, fbw, drawX0, drawY0, drawX1, drawY1, pixel, m_writeVramFuncs[fpsm & 0x3Fu]);
+            if (writeZ)
+                GSMem::FillRect(m_vram, zpsm, zbp, fbw, drawX0, drawY0, drawX1, drawY1, z1, m_writeVramFuncs[zpsm & 0x3Fu]);
+            return;
+        }
         for (int y = drawY0; y <= drawY1; ++y)
             for (int x = drawX0; x <= drawX1; ++x)
                 WritePixel(state, x, y, z1, r, g, b, a, v1.fog);

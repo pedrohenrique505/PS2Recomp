@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <array>
+#include <cstring>
 
 #include "runtime/gs/ps2_gs_memory.h"
 
@@ -252,6 +254,85 @@ namespace GSMem
             return PixelStorageTraits<Z16S>::Read(PageTableZ16S, data, bp, bw, x, y, &cache);
         default:
             return 0u;
+        }
+    }
+
+    // Endereco em bytes do pixel (so para formatos de 32 e 16 bits sem indexacao); 0xFFFFFFFF se nao suportado.
+    u32 PixelByteAddress(u32 psm, u32 bp, u32 bw, u32 x, u32 y)
+    {
+        auto bytes = [](u32 pixelAddr, u32 bits) { return static_cast<u32>(((u64)pixelAddr * bits / 8) & (MEMORY_SIZE - 1)); };
+        switch (static_cast<PixelStorageMode>(psm & 0x3Fu))
+        {
+        case C32: case C24: return bytes(PixelStorageTraits<C32>::Address(PageTableC32, bp, bw, x, y), 32);
+        case Z32: case Z24: return bytes(PixelStorageTraits<Z32>::Address(PageTableZ32, bp, bw, x, y), 32);
+        case C16:  return bytes(PixelStorageTraits<C16>::Address(PageTableC16, bp, bw, x, y), 16);
+        case C16S: return bytes(PixelStorageTraits<C16S>::Address(PageTableC16S, bp, bw, x, y), 16);
+        case Z16:  return bytes(PixelStorageTraits<Z16>::Address(PageTableZ16, bp, bw, x, y), 16);
+        case Z16S: return bytes(PixelStorageTraits<Z16S>::Address(PageTableZ16S, bp, bw, x, y), 16);
+        default: return 0xFFFFFFFFu;
+        }
+    }
+
+    // Preenche [x0,x1]x[y0,y1] com um valor constante. Um bloco (8x8 px em 32 bits, 16x8 em 16 bits)
+    // ocupa 256 B contiguos e alinhados; cobrir o bloco inteiro dispensa o endereco por pixel
+    // (jogos limpam a tela em faixas de 32 px, que nunca cobrem uma pagina). `write` escreve um pixel.
+    void FillRect(u8* vram, u32 psm, u32 base, u32 bw, int x0, int y0, int x1, int y1, u32 value,
+                  void (*write)(u8*, u32, u32, u32, u32, u32))
+    {
+        const auto mode = static_cast<PixelStorageMode>(psm & 0x3Fu);
+        const bool is32 = mode == C32 || mode == C24 || mode == Z32 || mode == Z24;
+        const bool is16 = mode == C16 || mode == C16S || mode == Z16 || mode == Z16S;
+        if ((!is32 && !is16) || (base & 31u) != 0u)
+        {
+            for (int y = y0; y <= y1; ++y)
+                for (int x = x0; x <= x1; ++x)
+                    write(vram, base, bw, x, y, value);
+            return;
+        }
+
+        constexpr int kBlockBytes = 256;
+        const int bwPx = is32 ? 8 : 16;
+        const int bhPx = 8;
+        const bool keepTopByte = mode == C24 || mode == Z24; // 24 bits: o byte alto do destino e preservado
+        alignas(16) u8 block[kBlockBytes];
+        if (is32)
+            for (int i = 0; i < kBlockBytes; i += 4)
+                std::memcpy(block + i, &value, 4);
+        else
+        {
+            const uint16_t v16 = static_cast<uint16_t>(value);
+            for (int i = 0; i < kBlockBytes; i += 2)
+                std::memcpy(block + i, &v16, 2);
+        }
+
+        for (int by = y0 - y0 % bhPx; by <= y1; by += bhPx)
+        {
+            for (int bx = x0 - x0 % bwPx; bx <= x1; bx += bwPx)
+            {
+                const int ax0 = std::max(bx, x0), ax1 = std::min(bx + bwPx - 1, x1);
+                const int ay0 = std::max(by, y0), ay1 = std::min(by + bhPx - 1, y1);
+                if (ax0 != bx || ax1 != bx + bwPx - 1 || ay0 != by || ay1 != by + bhPx - 1)
+                {
+                    for (int y = ay0; y <= ay1; ++y)
+                        for (int x = ax0; x <= ax1; ++x)
+                            write(vram, base, bw, x, y, value);
+                    continue;
+                }
+
+                u8* dst = vram + (PixelByteAddress(psm, base, bw, bx, by) & ~static_cast<u32>(kBlockBytes - 1));
+                if (keepTopByte)
+                {
+                    for (int i = 0; i < kBlockBytes; i += 4)
+                    {
+                        u32 w;
+                        std::memcpy(&w, dst + i, 4);
+                        w = (w & 0xFF000000u) | (value & 0x00FFFFFFu);
+                        std::memcpy(dst + i, &w, 4);
+                    }
+                }
+                else
+                    std::memcpy(dst, block, kBlockBytes);
+            }
         }
     }
 

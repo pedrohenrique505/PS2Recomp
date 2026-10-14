@@ -1,5 +1,7 @@
 #include "Common.h"
 #include "Pad.h"
+#include <chrono>
+#include <cstdlib>
 
 namespace ps2_stubs
 {
@@ -313,6 +315,16 @@ namespace ps2_stubs
                     applyGamepadState(state);
                     applyKeyboardState(state, portState.analogMode);
                 }
+            }
+
+            // PS2X_AUTOX=<seg>: a partir de <seg> segundos pulsa X (300 ms ligado, 300 ms desligado), para medir sem teclado
+            static const double autoXStart = std::getenv("PS2X_AUTOX") ? std::atof(std::getenv("PS2X_AUTOX")) : -1.0;
+            if (autoXStart >= 0.0)
+            {
+                static const auto t0 = std::chrono::steady_clock::now();
+                const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+                if (t >= autoXStart && (static_cast<long>((t - autoXStart) * 1000.0) / 300) % 2 == 0)
+                    setButton(state, kPadBtnCross, true);
             }
 
             fillPadStatus(outData, state, portState);

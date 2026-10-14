@@ -543,6 +543,11 @@ namespace GSMem
     // Shares swizzle, VRAM wrapping, and lane extraction with the direct reads.
     u32 ReadTexture(TexturePageCache& cache, const u8* data, u32 psm, u32 bp, u32 bw, u32 x, u32 y);
 
+	u32 PixelByteAddress(u32 psm, u32 bp, u32 bw, u32 x, u32 y);
+
+	void FillRect(u8* vram, u32 psm, u32 base, u32 bw, int x0, int y0, int x1, int y1, u32 value,
+	              void (*write)(u8*, u32, u32, u32, u32, u32));
+
 	void WriteCT32(u8* data, u32 bp, u32 bw, u32 x, u32 y, u32 value);
 	void WriteZ32(u8* data, u32 bp, u32 bw, u32 x, u32 y, u32 value);
 
