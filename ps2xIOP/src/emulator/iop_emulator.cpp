@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include "iop_emulator.h"
 #include "imports/iop_cdvd.h"
 #include "core/iop_cpu.h"
@@ -380,7 +382,20 @@ namespace ps2x::iop::detail
 
             if (const auto import = imports.decode(cpu.pc))
             {
+                const uint32_t traceA0 = cpu.gpr[4], traceA1 = cpu.gpr[5], traceA2 = cpu.gpr[6], traceRa = cpu.gpr[31];
                 const ImportDisposition disposition = dispatchImport(*import, cpu);
+                // PS2X_IOP_TRACE=N: imprime as N primeiras chamadas de import dos módulos IOP (biblioteca:ordinal,
+                // argumentos, retorno e se foi tratada) para ver onde um módulo como o 989snd para.
+                static const long traceLimit = std::getenv("PS2X_IOP_TRACE") ? std::atol(std::getenv("PS2X_IOP_TRACE")) : 0;
+                static long tracePrinted = 0;
+                if (tracePrinted < traceLimit)
+                {
+                    ++tracePrinted;
+                    std::fprintf(stderr, "[iop-import] %s:%u a0=%x a1=%x a2=%x v0=%x ra=%x %s\n", import->library.c_str(),
+                                 import->ordinal, traceA0, traceA1, traceA2, cpu.gpr[2], traceRa,
+                                 disposition == ImportDisposition::Missing ? "MISSING"
+                                 : disposition == ImportDisposition::JumpToGuest ? "guest" : "ok");
+                }
                 ++totalInstructions;
                 ++totalCycles;
                 if (disposition == ImportDisposition::JumpToGuest)

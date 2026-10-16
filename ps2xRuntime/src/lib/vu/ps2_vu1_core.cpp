@@ -1879,6 +1879,24 @@ void VU1Interpreter::run(uint8_t *vuCode, uint32_t codeSize,
         m_pendingHaltD = false;
         m_pendingHaltT = false;
     }
+    // PS2X_PROF: conta execuções que saíram por orçamento de ciclos em vez de E-bit/halt.
+    if (static const bool prof = std::getenv("PS2X_PROF") != nullptr; prof)
+    {
+        static uint64_t ended = 0, budget = 0, other = 0;
+        if (programEnded)
+            ++ended;
+        else if (m_cycle >= budgetEnd)
+        {
+            if (++budget <= 5)
+                std::fprintf(stderr, "[vu1] orçamento de %u ciclos estourou em pc=0x%x\n", maxCycles, m_state.pc);
+        }
+        else
+            ++other;
+        if ((ended + budget + other) % 20000u == 0u)
+            std::fprintf(stderr, "[vu1] execuções: fim normal=%llu estouro=%llu outro=%llu\n",
+                         static_cast<unsigned long long>(ended), static_cast<unsigned long long>(budget),
+                         static_cast<unsigned long long>(other));
+    }
     m_state.cycles = m_cycle;
     if (useVuRounding && previousRoundingMode != -1)
         std::fesetround(previousRoundingMode);
