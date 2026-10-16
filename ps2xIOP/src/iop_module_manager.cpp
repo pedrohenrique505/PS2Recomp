@@ -60,6 +60,7 @@ namespace ps2x::iop::detail
         m_records.clear();
         m_hleIdsByKey.clear();
         m_loadedKeyReferences.clear();
+        ++m_loadedGeneration;
         m_nextHleId = 0x40000000;
     }
 
@@ -149,11 +150,16 @@ namespace ps2x::iop::detail
     {
         if (aliases.empty())
             return true;
-        return std::any_of(aliases.begin(), aliases.end(), [&](std::string_view alias)
-                           {
-                               const std::string key = ps2PathLeafKey(alias);
-                               const auto found = m_loadedKeyReferences.find(key);
-                               return found != m_loadedKeyReferences.end() && found->second != 0u; });
+        auto &cached = m_isLoadedCache[aliases.data()];
+        if (cached.first == m_loadedGeneration)
+            return cached.second;
+        cached.first = m_loadedGeneration;
+        cached.second = std::any_of(aliases.begin(), aliases.end(), [&](std::string_view alias)
+                                    {
+                                        const std::string key = ps2PathLeafKey(alias);
+                                        const auto found = m_loadedKeyReferences.find(key);
+                                        return found != m_loadedKeyReferences.end() && found->second != 0u; });
+        return cached.second;
     }
 
     bool IopModuleManager::recognizes(std::string_view path) const
@@ -165,10 +171,12 @@ namespace ps2x::iop::detail
     void IopModuleManager::addLoadedKey(std::string_view key)
     {
         ++m_loadedKeyReferences[std::string(key)];
+        ++m_loadedGeneration;
     }
 
     void IopModuleManager::removeLoadedKey(std::string_view key)
     {
+        ++m_loadedGeneration;
         const auto found = m_loadedKeyReferences.find(std::string(key));
         if (found == m_loadedKeyReferences.end())
             return;

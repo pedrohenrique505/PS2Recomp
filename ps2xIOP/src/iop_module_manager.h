@@ -44,6 +44,10 @@ namespace ps2x::iop::detail
         std::unordered_map<int32_t, Record> m_records;
         std::unordered_map<std::string, int32_t> m_hleIdsByKey;
         std::unordered_map<std::string, uint32_t> m_loadedKeyReferences;
+        // isLoaded roda em todo RPC (selectRpcAbi); guarda o resultado por lista de aliases até o conjunto de
+        // módulos carregados mudar, em vez de normalizar caminhos a cada chamada.
+        uint64_t m_loadedGeneration = 1;
+        mutable std::unordered_map<const void *, std::pair<uint64_t, bool>> m_isLoadedCache;
         int32_t m_nextHleId = 0x40000000;
     };
 }
