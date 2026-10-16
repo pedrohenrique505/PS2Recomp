@@ -415,6 +415,17 @@ namespace
         }
     }
 
+    // INT=1 FFMD=1: cada field mostra linhas seguidas de um buffer com metade da altura; dobra as linhas.
+    void lineDoublePresentation(std::vector<uint8_t> &pixels, uint32_t width, uint32_t &height)
+    {
+        const uint32_t outHeight = std::min<uint32_t>(height * 2u, kHostFrameHeight);
+        for (uint32_t y = outHeight; y-- > 0u;)
+            std::memmove(pixels.data() + y * kHostFrameWidth * 4u,
+                         pixels.data() + (y >> 1u) * kHostFrameWidth * 4u,
+                         width * 4u);
+        height = outHeight;
+    }
+
     void normalizePresentationAlpha(std::vector<uint8_t> &pixels, uint32_t width, uint32_t height)
     {
         for (uint32_t y = 0; y < height; ++y)
@@ -1936,6 +1947,12 @@ PresentationFrame GSCpuBackend::PresentFromLocalMemory(const GSPresentationReque
     uint32_t width1 = 0u, height1 = 0u, width2 = 0u, height2 = 0u;
     decodeDisplaySize(request.display1, width1, height1);
     decodeDisplaySize(request.display2, width2, height2);
+    const bool halfHeightFields = smode2.interlaced && smode2.frameMode;
+    if (halfHeightFields)
+    {
+        height1 = std::max(1u, height1 / 2u);
+        height2 = std::max(1u, height2 / 2u);
+    }
     const bool valid1 = pmode.enableCrt1 && hasDisplaySetup(request.display1, displayFrame1);
     const bool valid2 = pmode.enableCrt2 && hasDisplaySetup(request.display2, displayFrame2);
     if (!valid1 && !valid2)
@@ -2023,6 +2040,8 @@ PresentationFrame GSCpuBackend::PresentFromLocalMemory(const GSPresentationReque
             normalizePresentationAlpha(result.pixels, result.width, result.height);
             if (fieldMode)
                 applyFieldPresentation(result.pixels, result.width, result.height, oddField);
+            if (halfHeightFields)
+                lineDoublePresentation(result.pixels, result.width, result.height);
             result.displayFbp = displayFrame1.fbp;
             result.sourceFbp = selected1.fbp;
             return result;
@@ -2039,6 +2058,8 @@ PresentationFrame GSCpuBackend::PresentFromLocalMemory(const GSPresentationReque
     if (fieldMode)
         applyFieldPresentation(result.pixels, result.width, result.height, oddField);
     normalizePresentationAlpha(result.pixels, result.width, result.height);
+    if (halfHeightFields)
+        lineDoublePresentation(result.pixels, result.width, result.height);
     result.displayFbp = displayFrame.fbp;
     result.sourceFbp = selected.fbp;
     return result;
