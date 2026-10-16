@@ -150,6 +150,9 @@ struct alignas(16) R5900Context
 
         // Initialize VU0 registers
         vu0_q = 1.0f; // Q register usually initialized to 1.0
+        // vf0 é a constante (0,0,0,1) do hardware; todo contexto de thread nasce aqui e jogos usam vf0.w como 1.0
+        // (matrizes homogêneas, w de vértice). Zerado, matrizes e luz feitas no VU0 colapsam.
+        vu0_vf[0] = _mm_set_ps(1.0f, 0.0f, 0.0f, 0.0f);
 
         // Reset COP0 registers
         cop0_random = 47; // Start at maximum value
