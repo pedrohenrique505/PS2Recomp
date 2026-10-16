@@ -1,3 +1,4 @@
+#include "runtime/gs/gs_dump.h"
 #include "runtime/ee_scheduler.h"
 
 #include "ps2_log.h"
@@ -1889,6 +1890,7 @@ void EeScheduler::processEvent(const EeEvent &event)
     case EeEventType::VBlankStart:
         ++m_vsyncTick;
         m_runtime.memory().gs().vsyncTick.store(m_vsyncTick, std::memory_order_release);
+        gsdump::onVSync(m_runtime.memory().gs(), m_vsyncTick);
         // PS2X_VSYNC_LOG=1: a cada 60 VSyncs imprime quantos VSyncs por segundo real (60 = velocidade de PS2).
         if (static const bool vsyncLog = std::getenv("PS2X_VSYNC_LOG") != nullptr; vsyncLog && m_vsyncTick % 60u == 0u)
         {

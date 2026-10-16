@@ -2,13 +2,246 @@
 #include "runtime/gs/gs_cpu_backend.h"
 #include "ps2_log.h"
 #include "runtime/ps2_memory.h"
+#include "runtime/gs/gs_dump.h"
 #include <atomic>
+#include <cstdlib>
+#include <mutex>
+#include <string>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <sstream>
+
+// ---- GS dump (formato do PCSX2, ver include/runtime/gs/gs_dump.h) ----
+namespace gsdump
+{
+    namespace
+    {
+        constexpr uint32_t kVramBytes = 4u * 1024u * 1024u;
+        constexpr uint32_t kStateHead = 425u; // GSState::Freeze v9 até m_tr.write
+        constexpr uint32_t kStateTail = 84u;  // 4 GIFPath (tag + reg) + m_q
+        constexpr uint32_t kPrivBytes = 0x2000u;
+
+        std::mutex s_mutex;
+        FILE *s_file = nullptr;
+        uint64_t s_startTick = 0, s_framesLeft = 0;
+        bool s_configured = false;
+        std::atomic<bool> s_done{false};
+        std::string s_path;
+        const uint8_t *s_vram = nullptr;
+        uint64_t s_raw[0x80]{}; // último valor escrito em cada registrador de desenho
+        std::atomic<uint64_t> s_seen{0}, s_written{0}; // pacotes que entraram no GS / gravados
+
+        void configureLocked()
+        {
+            s_configured = true;
+            const char *spec = std::getenv("PS2X_GSDUMP");
+            if (!spec)
+            {
+                s_done = true;
+                return;
+            }
+            char *end = nullptr;
+            s_startTick = std::strtoull(spec, &end, 0);
+            s_framesLeft = (end && *end == ':') ? std::strtoull(end + 1, &end, 0) : 2u;
+            s_path = (end && *end == ':') ? std::string(end + 1) : std::string("ps2x.gs");
+        }
+
+        void put(const void *p, size_t n) { std::fwrite(p, 1, n, s_file); }
+        void putU8(uint8_t v) { put(&v, 1); }
+        void putU32(uint32_t v) { put(&v, 4); }
+
+        void transferLocked(const uint8_t *data, uint32_t size)
+        {
+            if (!s_file || !data || size == 0u)
+                return;
+            s_written.fetch_add(1, std::memory_order_relaxed);
+            putU8(0);
+            putU8(3); // índice de path genérico do PCSX2 (GSgifTransfer)
+            putU32(size);
+            put(data, size);
+        }
+
+        void putPrivLocked(const GSRegisters &r)
+        {
+            uint8_t block[kPrivBytes]{};
+            const uint64_t vals[] = {r.pmode, r.smode1, r.smode2, r.srfsh, r.synch1, r.synch2, r.syncv, r.dispfb1,
+                                     r.display1, r.dispfb2, r.display2, r.extbuf, r.extdata, r.extwrite, r.bgcolor};
+            for (size_t i = 0; i < std::size(vals); ++i)
+                std::memcpy(block + i * 0x10u, &vals[i], 8);
+            const uint64_t csr = r.csr.load(std::memory_order_relaxed);
+            std::memcpy(block + 0x1000u, &csr, 8);
+            std::memcpy(block + 0x1010u, &r.imr, 8);
+            std::memcpy(block + 0x1040u, &r.busdir, 8);
+            std::memcpy(block + 0x1080u, &r.siglblid, 8);
+            put(block, sizeof(block));
+        }
+
+        void openLocked(const GSRegisters &priv)
+        {
+            s_file = std::fopen(s_path.c_str(), "wb");
+            if (!s_file)
+            {
+                std::fprintf(stderr, "[gsdump] não abriu %s\n", s_path.c_str());
+                s_done = true;
+                return;
+            }
+            static const char serial[] = "SCUS-97177";
+            const uint32_t serialSize = sizeof(serial) - 1u;
+            const uint32_t stateSize = kStateHead + kVramBytes + kStateTail;
+            const uint32_t header[9] = {9u, stateSize, 36u, serialSize, 0u, 0u, 0u, 36u + serialSize, 0u};
+            putU32(0xFFFFFFFFu);
+            putU32(sizeof(header) + serialSize);
+            put(header, sizeof(header));
+            put(serial, serialSize);
+
+            // estado: registradores na ordem de GSState::Freeze, VRAM, cauda zerada
+            uint8_t head[kStateHead]{};
+            uint32_t version = 9u;
+            std::memcpy(head, &version, 4);
+            uint8_t *p = head + 4;
+            const uint8_t env[] = {GS_REG_PRIM, GS_REG_PRMODECONT, GS_REG_TEXCLUT, GS_REG_SCANMSK, GS_REG_TEXA,
+                                   GS_REG_FOGCOL, GS_REG_DIMX, GS_REG_DTHE, GS_REG_COLCLAMP, GS_REG_PABE,
+                                   GS_REG_BITBLTBUF, GS_REG_TRXDIR, GS_REG_TRXPOS, GS_REG_TRXREG, GS_REG_TRXREG};
+            for (uint8_t reg : env)
+            {
+                std::memcpy(p, &s_raw[reg], 8);
+                p += 8;
+            }
+            for (int c = 0; c < 2; ++c)
+            {
+                const uint8_t ctx[] = {GS_REG_XYOFFSET_1, GS_REG_TEX0_1, GS_REG_TEX1_1, GS_REG_CLAMP_1,
+                                       GS_REG_MIPTBP1_1, GS_REG_MIPTBP2_1, GS_REG_SCISSOR_1, GS_REG_ALPHA_1,
+                                       GS_REG_TEST_1, GS_REG_FBA_1, GS_REG_FRAME_1, GS_REG_ZBUF_1};
+                for (uint8_t reg : ctx)
+                {
+                    std::memcpy(p, &s_raw[reg + c], 8);
+                    p += 8;
+                }
+            }
+            for (uint8_t reg : {GS_REG_RGBAQ, GS_REG_ST, GS_REG_UV, GS_REG_FOG})
+            {
+                std::memcpy(p, &s_raw[reg], 8);
+                p += 8;
+            }
+            put(head, sizeof(head));
+            if (s_vram)
+                put(s_vram, kVramBytes);
+            else
+            {
+                static const uint8_t zeros[4096]{};
+                for (uint32_t i = 0; i < kVramBytes; i += sizeof(zeros))
+                    put(zeros, sizeof(zeros));
+            }
+            const uint8_t tail[kStateTail]{};
+            put(tail, sizeof(tail));
+            putPrivLocked(priv);
+            std::fprintf(stderr, "[gsdump] gravando %s a partir do vsync %llu (pacotes no GS até agora: %llu)\n",
+                         s_path.c_str(), static_cast<unsigned long long>(s_startTick),
+                         static_cast<unsigned long long>(s_seen.load()));
+        }
+    }
+
+    void setVram(const uint8_t *vram)
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        s_vram = vram;
+    }
+
+    void shadowRegister(uint8_t reg, uint64_t value)
+    {
+        if (reg < 0x80u)
+            s_raw[reg] = value;
+    }
+
+    void transfer(const uint8_t *data, uint32_t size)
+    {
+        s_seen.fetch_add(1, std::memory_order_relaxed);
+        if (s_done)
+            return;
+        std::lock_guard<std::mutex> lock(s_mutex);
+        transferLocked(data, size);
+    }
+
+    // Escrita direta de registrador vira um pacote A+D de um registrador.
+    void registerWrite(uint8_t reg, uint64_t value)
+    {
+        if (s_done)
+            return;
+        std::lock_guard<std::mutex> lock(s_mutex);
+        if (!s_file)
+            return;
+        uint8_t pkt[32]{};
+        const uint64_t tagLo = 1ull | (1ull << 15) | (1ull << 60); // NLOOP=1 EOP=1 PACKED NREG=1
+        const uint64_t tagHi = 0xEull;                             // A+D
+        const uint64_t addr = reg;
+        std::memcpy(pkt, &tagLo, 8);
+        std::memcpy(pkt + 8, &tagHi, 8);
+        std::memcpy(pkt + 16, &value, 8);
+        std::memcpy(pkt + 24, &addr, 8);
+        transferLocked(pkt, sizeof(pkt));
+    }
+
+    // Upload nativo vira A+D (BITBLTBUF, TRXPOS, TRXREG, TRXDIR) seguido de um pacote IMAGE.
+    void imageUpload(uint64_t bitbltbuf, uint64_t trxpos, uint64_t trxreg, uint64_t trxdir, const uint8_t *data,
+                     uint32_t size)
+    {
+        if (s_done)
+            return;
+        std::lock_guard<std::mutex> lock(s_mutex);
+        if (!s_file)
+            return;
+        uint8_t ad[16 + 4 * 16]{};
+        const uint64_t tagLo = 4ull | (1ull << 60);
+        const uint64_t tagHi = 0xEull;
+        std::memcpy(ad, &tagLo, 8);
+        std::memcpy(ad + 8, &tagHi, 8);
+        const uint64_t regs[4][2] = {{bitbltbuf, GS_REG_BITBLTBUF}, {trxpos, GS_REG_TRXPOS},
+                                     {trxreg, GS_REG_TRXREG}, {trxdir, GS_REG_TRXDIR}};
+        for (int i = 0; i < 4; ++i)
+        {
+            std::memcpy(ad + 16 + i * 16, &regs[i][0], 8);
+            std::memcpy(ad + 24 + i * 16, &regs[i][1], 8);
+        }
+        transferLocked(ad, sizeof(ad));
+        const uint32_t qwc = size / 16u;
+        std::vector<uint8_t> img(16u + qwc * 16u);
+        const uint64_t imgLo = static_cast<uint64_t>(qwc & 0x7FFFu) | (1ull << 15) | (2ull << 58); // IMAGE
+        std::memcpy(img.data(), &imgLo, 8);
+        std::memcpy(img.data() + 16, data, qwc * 16u);
+        transferLocked(img.data(), static_cast<uint32_t>(img.size()));
+    }
+
+    void onVSync(const GSRegisters &priv, uint64_t tick)
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        if (!s_configured)
+            configureLocked();
+        if (s_done)
+            return;
+        if (!s_file)
+        {
+            if (tick >= s_startTick)
+                openLocked(priv);
+            return;
+        }
+        putU8(3);
+        putPrivLocked(priv);
+        putU8(1);
+        putU8(static_cast<uint8_t>(tick & 1u));
+        if (--s_framesLeft == 0u)
+        {
+            std::fclose(s_file);
+            s_file = nullptr;
+            s_done = true;
+            std::fprintf(stderr, "[gsdump] fechado %s (pacotes no GS desde o boot: %llu, gravados: %llu)\n",
+                         s_path.c_str(), static_cast<unsigned long long>(s_seen.load()),
+                         static_cast<unsigned long long>(s_written.load()));
+        }
+    }
+}
 
 namespace
 {
@@ -115,6 +348,7 @@ void GS::init(uint8_t *vram, uint32_t vramSize, GSRegisters *privRegs)
 {
     m_localMemoryStorage = vram;
     m_localMemorySize = vramSize;
+    gsdump::setVram(vram);
     m_privRegs = privRegs;
     if (!m_backend)
         m_backend = std::make_unique<GSCpuBackend>();
@@ -641,6 +875,7 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
 void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
 {
     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+    gsdump::transfer(data, sizeBytes);
     if (!data || sizeBytes < 16 || !m_backend)
         return;
 
@@ -757,6 +992,7 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
 bool GS::processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes)
 {
     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+    gsdump::transfer(data, sizeBytes);
     if (!data || sizeBytes < 16u || !m_backend)
         return false;
 
@@ -802,6 +1038,7 @@ void GS::uploadImageNative(uint64_t bitbltbuf,
                            uint32_t sizeBytes)
 {
     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+    gsdump::imageUpload(bitbltbuf, trxpos, trxreg, trxdir, data, sizeBytes);
     uploadImageNativeUnlocked(bitbltbuf, trxpos, trxreg, trxdir, data, sizeBytes);
 }
 
@@ -1080,11 +1317,13 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
 void GS::writeRegister(uint8_t regAddr, uint64_t value)
 {
     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+    gsdump::registerWrite(regAddr, value);
     writeRegisterUnlocked(regAddr, value);
 }
 
 void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
 {
+    gsdump::shadowRegister(regAddr, value);
     const bool interestingReg =
         regAddr == GS_REG_PRIM ||
         regAddr == GS_REG_RGBAQ ||
