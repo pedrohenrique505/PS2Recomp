@@ -1753,6 +1753,16 @@ void EeScheduler::applyPendingPreemption()
 void EeScheduler::processPendingEvents()
 {
     assertExecutor();
+    // Caminho rápido: roda duas vezes por despacho; sem evento postado, IRQ de timer ou prazo vencido em
+    // ciclos não há o que fazer, e o caminho completo custa deque+malloc, dois mutex e leitura de relógio.
+    // postEvent liga m_checkpointPending e scheduleDeadline publica m_nextDeadlineCycle, então nada se perde.
+    const uint64_t nextDeadline = m_nextDeadlineCycle.load(std::memory_order_acquire);
+    if (!m_checkpointPending.load(std::memory_order_acquire) && m_pendingEeTimerInterrupts == 0u &&
+        (nextDeadline == 0u || m_eeCycle < nextDeadline))
+    {
+        applyPendingPreemption();
+        return;
+    }
     processDueDeadlines();
     const uint32_t timerInterrupts = m_pendingEeTimerInterrupts;
     m_pendingEeTimerInterrupts = 0u;

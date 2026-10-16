@@ -12,6 +12,13 @@
 
 namespace
 {
+    // cache do GIF_STAT usado por advanceEeTimers; invalidado quando m_ioRegisters é limpo
+    const PS2Memory *gifStatOwner = nullptr;
+    uint32_t *gifStat = nullptr;
+}
+
+namespace
+{
     inline void inRange(uint32_t offset, size_t bytes, size_t regionSize, const char *op, uint32_t address)
     {
         if (static_cast<uint64_t>(offset) + static_cast<uint64_t>(bytes) > static_cast<uint64_t>(regionSize))
@@ -355,6 +362,8 @@ bool PS2Memory::initialize(size_t ramSize)
 
         // Initialize I/O registers
         m_ioRegisters.clear();
+        gifStatOwner = nullptr;
+        gifStat = nullptr;
 
         // Initialize GS registers
         memset(&gs_regs, 0, sizeof(gs_regs));
@@ -413,9 +422,17 @@ uint32_t PS2Memory::advanceEeTimers(uint64_t eeCycles) noexcept
 
     constexpr uint32_t kGifStat = 0x10003020u;
     constexpr uint32_t kGifFqcMask = 0x1F000000u;
-    auto gifStatIt = m_ioRegisters.find(kGifStat);
-    if (gifStatIt != m_ioRegisters.end())
-        gifStatIt->second &= ~kGifFqcMask;
+    // Roda a cada despacho do EE: guarda o endereço do GIF_STAT em vez de buscar no mapa toda vez
+    // (referências a elementos de unordered_map sobrevivem a rehash). Fica no .cpp para não mexer no header,
+    // que os ~26k arquivos gerados incluem.
+    if (gifStatOwner != this)
+    {
+        auto gifStatIt = m_ioRegisters.find(kGifStat);
+        gifStat = gifStatIt != m_ioRegisters.end() ? &gifStatIt->second : nullptr;
+        gifStatOwner = gifStat ? this : nullptr;
+    }
+    if (gifStat)
+        *gifStat &= ~kGifFqcMask;
 
     uint32_t interruptMask = 0u;
     for (size_t index = 0; index < m_eeTimers.size(); ++index)
