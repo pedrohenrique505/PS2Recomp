@@ -369,6 +369,12 @@ namespace ps2x::iop::detail
                 cpu.stopped = true;
                 return false;
             }
+            if (cpu.pc == kRpcReturnSentinel)
+            {
+                // fim de uma função de servidor RPC: encerra a fatia sem matar a thread (runCycles trata)
+                cpu.yielded = true;
+                return false;
+            }
             if (physicalAddress(cpu.pc) >= kRamSize)
             {
                 std::ostringstream out;
@@ -578,6 +584,7 @@ namespace ps2x::iop::detail
                     servicePendingDmaInterrupts();
                     servicePendingGuestCallbacks();
                     timrman.serviceDue(totalCycles, *this);
+                    rpc.expireThreadCalls(totalCycles);
                     IopThread *next = kernel.beginNextReady(totalCycles);
                     if (!next)
                     {
@@ -592,6 +599,8 @@ namespace ps2x::iop::detail
                     }
                     const uint64_t before = totalCycles;
                     runCpu(next->cpu, static_cast<uint32_t>(std::min<uint64_t>(kDefaultSlice, target - totalCycles)));
+                    if (next->cpu.pc == kRpcReturnSentinel)
+                        (void)rpc.onThreadReturn(*next);
                     kernel.endTimeslice(*next, kThreadReturnSentinel);
                     if (totalCycles == before)
                         ++totalCycles;

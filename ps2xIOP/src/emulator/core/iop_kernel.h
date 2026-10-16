@@ -67,6 +67,12 @@ namespace ps2x::iop::detail
         void terminateThreadsInRange(uint32_t base, uint32_t size);
 
         [[nodiscard]] size_t threadCount() const noexcept { return m_threads.size(); }
+        [[nodiscard]] int currentThreadId() const noexcept { return m_currentThread ? m_currentThread->id : 0; }
+        [[nodiscard]] IopThread *findThread(int id) noexcept
+        {
+            const auto it = m_threads.find(id);
+            return it == m_threads.end() ? nullptr : &it->second;
+        }
 
     private:
         struct Semaphore

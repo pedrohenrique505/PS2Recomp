@@ -104,6 +104,9 @@ namespace ps2x::iop
         uint32_t guestFunction = 0;
         uint32_t guestArguments[4]{};
         uint32_t guestDefaultResultAddress = 0;
+        // O servidor roda na sua thread IOP e termina depois; o IOP chama IopHost::completeDeferredRpc
+        // quando o resultado já estiver no buffer de recepção do EE.
+        bool deferred = false;
     };
 
     enum class SifTransferKind : uint32_t

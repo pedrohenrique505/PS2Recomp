@@ -118,6 +118,13 @@ namespace ps2x::iop
                                          uint32_t a3,
                                          uint32_t *resultAddress) = 0;
 
+        // Um RPC devolvido com RpcResult::deferred terminou: o resultado já foi escrito em
+        // request.receive. O host libera o cliente, sinaliza o semáforo e chama a end function.
+        virtual void completeDeferredRpc(const RpcRequest &request)
+        {
+            (void)request;
+        }
+
         // Deliver an IOP -> EE SIF command packet. The default keeps hosts
         // which do not emulate the EE command dispatcher source-compatible.
         virtual bool sendSifCommand(uint32_t commandId,

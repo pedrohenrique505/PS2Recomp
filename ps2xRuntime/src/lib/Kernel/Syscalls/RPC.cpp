@@ -139,6 +139,19 @@ namespace ps2_syscalls
         }
 #endif
 
+        // RPCs que o IOP executa na thread do servidor e terminam depois (RpcResult::deferred).
+        constexpr uint32_t kDeferredRpcWaitType = 0x52504344u; // 'RPCD', tipo do waitExternal
+        struct DeferredRpc
+        {
+            uint32_t completionSemaphore = 0;
+            bool blocking = false;
+            uint32_t endFunction = 0;
+            uint32_t endParameter = 0;
+            uint32_t gp = 0;
+        };
+        std::mutex g_deferredRpcMutex;
+        std::unordered_map<uint32_t, DeferredRpc> g_deferredRpcs; // por endereço do cliente
+
         bool signalRpcCompletionSema(PS2Runtime *runtime, uint32_t semaId)
         {
             if (!runtime || semaId == 0u || semaId > 0xFFFFu)
@@ -545,6 +558,24 @@ namespace ps2_syscalls
 
             iopResult = PS2IopTransport::handleRpc(runtime, rdram, ctx, request);
 
+            if (iopResult.deferred)
+            {
+                // O servidor roda numa thread do IOP e termina depois (completeDeferredRpc). NOWAIT volta já
+                // com o cliente ocupado; o modo bloqueante espera, como o WaitSema do libsif real.
+                const bool blocking = (mode & kSifRpcModeNowait) == 0u;
+                {
+                    std::lock_guard<std::mutex> lock(g_deferredRpcMutex);
+                    g_deferredRpcs[clientPtr] = DeferredRpc{completionSemaphore, blocking, endFunction, endParameter,
+                                                            getRegU32(ctx, 28)};
+                }
+                setReturnS32(ctx, 0);
+                if (!blocking)
+                    return;
+                ctx->pc = getRegU32(ctx, 31);
+                runtime->eeScheduler().waitExternal(EeWaitReason::External, kDeferredRpcWaitType, clientPtr,
+                                                    [](R5900Context &resumed) { setReturnS32(&resumed, 0); });
+            }
+
             if (iopResult.signalNowaitCompletion &&
                 (mode & kSifRpcModeNowait) != 0u)
             {
@@ -700,6 +731,42 @@ namespace ps2_syscalls
             runtime->eeScheduler().invokeCurrent(std::move(invocation));
         }
         finishCall(nullptr, *ctx);
+    }
+
+    void completeDeferredRpc(PS2Runtime *runtime, const ps2x::iop::RpcRequest &request)
+    {
+        DeferredRpc deferred;
+        {
+            std::lock_guard<std::mutex> lock(g_deferredRpcMutex);
+            const auto it = g_deferredRpcs.find(request.clientAddress);
+            if (it == g_deferredRpcs.end())
+                return;
+            deferred = it->second;
+            g_deferredRpcs.erase(it);
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_rpc_mutex);
+            g_rpc_clients[request.clientAddress].busy = false;
+        }
+        (void)signalRpcCompletionSema(runtime, deferred.completionSemaphore);
+        if (deferred.blocking)
+            runtime->eeScheduler().postEvent(EeEvent{EeEventType::ExternalWake, kDeferredRpcWaitType, request.clientAddress});
+
+        uint32_t callbackFunction = deferred.endFunction;
+        if (callbackFunction != 0u && !runtime->hasFunction(callbackFunction) && callbackFunction >= 0x10000u &&
+            runtime->hasFunction(callbackFunction - 0x10000u))
+            callbackFunction -= 0x10000u;
+        if (callbackFunction != 0u && runtime->hasFunction(callbackFunction))
+        {
+            GuestInvocation callback{};
+            callback.kind = GuestInvocationKind::RpcCallback;
+            callback.context.pc = callbackFunction;
+            SET_GPR_U32(&callback.context, 4, deferred.endParameter);
+            SET_GPR_U32(&callback.context, 28, deferred.gp);
+            SET_GPR_U32(&callback.context, 29, runtime->eeScheduler().invocationStackTop());
+            SET_GPR_U32(&callback.context, 31, 0u);
+            runtime->eeScheduler().queueInvocation(std::move(callback));
+        }
     }
 
     void SifRegisterRpc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)

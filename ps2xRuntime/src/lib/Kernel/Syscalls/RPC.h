@@ -17,4 +17,8 @@ namespace ps2_syscalls
     void sceSifCallRpc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
     void sceSifSendCmd(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
     void sceRpcGetPacket(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
+
+    // Chamado pelo IOP quando um RPC devolvido como deferred termina (resultado já no buffer do EE):
+    // libera o cliente, sinaliza o semáforo, acorda quem chamou em modo bloqueante e agenda a end function.
+    void completeDeferredRpc(PS2Runtime *runtime, const ps2x::iop::RpcRequest &request);
 }

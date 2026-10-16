@@ -1,3 +1,4 @@
+#include "Kernel/Syscalls/RPC.h"
 #include "ps2_iop_host.h"
 
 #include "ps2_runtime.h"
@@ -242,6 +243,11 @@ uint32_t PS2IopHostAdapter::allocateGuest(uint32_t size, uint32_t alignment)
 void PS2IopHostAdapter::freeGuest(uint32_t address)
 {
     m_runtime.guestFree(address);
+}
+
+void PS2IopHostAdapter::completeDeferredRpc(const ps2x::iop::RpcRequest &request)
+{
+    ps2_syscalls::completeDeferredRpc(&m_runtime, request);
 }
 
 void PS2IopHostAdapter::audioCommand(uint32_t sid,
