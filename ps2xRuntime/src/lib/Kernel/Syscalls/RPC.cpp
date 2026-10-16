@@ -355,6 +355,11 @@ namespace ps2_syscalls
     void SifCallRpc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         std::lock_guard<std::recursive_mutex> rpcCallLock(g_sif_call_rpc_mutex);
+        // Um RPC real custa milhares de ciclos (pacote SIF, DMA, resposta do IOP). Sem cobrar, loops que
+        // reenviam comandos enquanto esperam outro cliente (989snd) giram sem o relógio emulado andar, e o
+        // IOP, que avança pelos ciclos do EE, nunca termina o que eles esperam.
+        constexpr uint32_t kSifCallRpcCycles = 4096u;
+        runtime->eeScheduler().accountCycles(kSifCallRpcCycles);
 
         const uint32_t clientPtr = getRegU32(ctx, 4);
         const uint32_t rpcNum = getRegU32(ctx, 5);
