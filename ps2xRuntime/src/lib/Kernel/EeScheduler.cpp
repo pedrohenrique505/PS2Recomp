@@ -1889,6 +1889,17 @@ void EeScheduler::processEvent(const EeEvent &event)
     case EeEventType::VBlankStart:
         ++m_vsyncTick;
         m_runtime.memory().gs().vsyncTick.store(m_vsyncTick, std::memory_order_release);
+        // PS2X_VSYNC_LOG=1: a cada 60 VSyncs imprime quantos VSyncs por segundo real (60 = velocidade de PS2).
+        if (static const bool vsyncLog = std::getenv("PS2X_VSYNC_LOG") != nullptr; vsyncLog && m_vsyncTick % 60u == 0u)
+        {
+            static auto last = std::chrono::steady_clock::now();
+            const auto now = std::chrono::steady_clock::now();
+            std::fprintf(stderr, "[vsync] tick=%llu %.1f vsync/s eeCycle=%llu\n",
+                         static_cast<unsigned long long>(m_vsyncTick),
+                         60.0 / std::chrono::duration<double>(now - last).count(),
+                         static_cast<unsigned long long>(m_eeCycle));
+            last = now;
+        }
         if ((m_vsyncTick & 1u) != 0u)
         {
             m_runtime.memory().gs().csr.fetch_or(0x2000ull, std::memory_order_acq_rel);

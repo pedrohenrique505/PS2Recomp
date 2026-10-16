@@ -1429,10 +1429,13 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
     }();
     if (isCall && !tracedCalls.empty() && tracedCalls.count(targetPc) != 0)
     {
+        // PS2X_TRACE_LIMIT: quantas chamadas imprimir (padrão 400); vs = VSync em que a chamada aconteceu.
+        static const int traceLimit = std::getenv("PS2X_TRACE_LIMIT") ? std::atoi(std::getenv("PS2X_TRACE_LIMIT")) : 400;
         static std::atomic<int> tracedPrinted{0};
-        if (tracedPrinted.fetch_add(1) < 400)
-            std::fprintf(stderr, "[call] %x a0=%x a1=%x a2=%x a3=%x s0=%x ra=%x\n", targetPc, GPR_U32(ctx, 4), GPR_U32(ctx, 5),
-                         GPR_U32(ctx, 6), GPR_U32(ctx, 7), GPR_U32(ctx, 16), sourcePc);
+        if (tracedPrinted.fetch_add(1) < traceLimit)
+            std::fprintf(stderr, "[call] %x a0=%x a1=%x a2=%x a3=%x s0=%x ra=%x vs=%llu\n", targetPc, GPR_U32(ctx, 4), GPR_U32(ctx, 5),
+                         GPR_U32(ctx, 6), GPR_U32(ctx, 7), GPR_U32(ctx, 16), sourcePc,
+                         static_cast<unsigned long long>(eeScheduler().currentVSyncTick()));
     }
 
     // Every inter-function transfer is also a deterministic EE safe point.
