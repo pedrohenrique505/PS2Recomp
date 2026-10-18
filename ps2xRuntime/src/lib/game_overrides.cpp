@@ -1,5 +1,6 @@
 #include "game_overrides.h"
 #include "ps2_runtime.h"
+#include "ps2_runtime_macros.h"
 #include "ps2_runtime_calls.h"
 #include "ps2_stubs.h"
 #include "ps2_syscalls.h"
@@ -60,6 +61,16 @@ namespace
         return leaf.string();
     }
 
+    // A handler bound by address replaces a guest function, so it must return to $ra like the stubs ps2_recomp
+    // generates (they set ctx->pc = $ra before calling the handler). Bare handlers leave ctx->pc alone: a call
+    // resumed at the bound address after a dispatcher checkpoint then ran the handler again forever.
+    template <void (*Handler)(uint8_t *, R5900Context *, PS2Runtime *)>
+    void returnToCaller(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        ctx->pc = GPR_U32(ctx, 31);
+        Handler(rdram, ctx, runtime);
+    }
+
     std::optional<PS2Runtime::RecompiledFunction> resolveHandlerByName(std::string_view handlerName)
     {
         const std::string_view resolvedSyscall = ps2_runtime_calls::resolveSyscallName(handlerName);
@@ -68,7 +79,7 @@ namespace
 #define PS2_RESOLVE_SYSCALL(name)                   \
     if (resolvedSyscall == std::string_view{#name}) \
     {                                               \
-        return &ps2_syscalls::name;                 \
+        return &returnToCaller<&ps2_syscalls::name>; \
     }
             PS2_SYSCALL_LIST(PS2_RESOLVE_SYSCALL)
 #undef PS2_RESOLVE_SYSCALL
@@ -80,7 +91,7 @@ namespace
 #define PS2_RESOLVE_STUB(name)                   \
     if (resolvedStub == std::string_view{#name}) \
     {                                            \
-        return &ps2_stubs::name;                 \
+        return &returnToCaller<&ps2_stubs::name>; \
     }
             PS2_STUB_LIST(PS2_RESOLVE_STUB)
 #undef PS2_RESOLVE_STUB
