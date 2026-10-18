@@ -7,8 +7,11 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <cstdlib>
+#include <cstdio>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 namespace
 {
@@ -1880,6 +1883,59 @@ void EeScheduler::processDueDeadlines()
     }
 }
 
+namespace
+{
+    // PS2X_DUMP_RAM="v<vsync>:path": no início daquele VBlank, na thread do jogo (ponto determinístico), grava a
+    // EE RAM em path e scratchpad/VU0/VU1 em path.spr, .vu0code, .vu0data, .vu1code, .vu1data, e imprime um hash
+    // FNV-1a de cada região para comparar execuções. A forma "segundos:path" continua em ps2_runtime.cpp.
+    void dumpMemoryAtVSync(PS2Memory &mem, uint64_t tick)
+    {
+        static const char *spec = std::getenv("PS2X_DUMP_RAM");
+        static uint64_t at = 0;
+        static std::string path;
+        static bool parsed = false;
+        if (!parsed)
+        {
+            parsed = true;
+            const char *colon = spec ? std::strchr(spec, ':') : nullptr;
+            if (spec && spec[0] == 'v' && colon)
+            {
+                at = std::strtoull(spec + 1, nullptr, 10);
+                path = colon + 1;
+            }
+        }
+        if (path.empty() || tick != at)
+            return;
+        const struct
+        {
+            const char *suffix;
+            const uint8_t *data;
+            size_t size;
+        } regions[] = {{"", mem.getRDRAM(), PS2_RAM_SIZE},
+                       {".spr", mem.getScratchpad(), PS2_SCRATCHPAD_SIZE},
+                       {".vu0code", mem.getVU0Code(), PS2_VU0_CODE_SIZE},
+                       {".vu0data", mem.getVU0Data(), PS2_VU0_DATA_SIZE},
+                       {".vu1code", mem.getVU1Code(), PS2_VU1_CODE_SIZE},
+                       {".vu1data", mem.getVU1Data(), PS2_VU1_DATA_SIZE}};
+        for (const auto &r : regions)
+        {
+            if (!r.data)
+                continue;
+            uint64_t h = 1469598103934665603ull;
+            for (size_t i = 0; i < r.size; ++i)
+                h = (h ^ r.data[i]) * 1099511628211ull;
+            const std::string file = path + r.suffix;
+            if (FILE *f = std::fopen(file.c_str(), "wb"))
+            {
+                std::fwrite(r.data, 1, r.size, f);
+                std::fclose(f);
+            }
+            std::fprintf(stderr, "[dumpram] vsync=%llu %s fnv=%016llx\n", static_cast<unsigned long long>(tick),
+                         file.c_str(), static_cast<unsigned long long>(h));
+        }
+    }
+}
+
 void EeScheduler::processEvent(const EeEvent &event)
 {
     switch (event.type)
@@ -1891,6 +1947,14 @@ void EeScheduler::processEvent(const EeEvent &event)
         ++m_vsyncTick;
         m_runtime.memory().gs().vsyncTick.store(m_vsyncTick, std::memory_order_release);
         gsdump::onVSync(m_runtime.memory().gs(), m_vsyncTick);
+        dumpMemoryAtVSync(m_runtime.memory(), m_vsyncTick);
+        // PS2X_STOP_VSYNC=N: encerra a execução naquele VSync (verificações e medições sem esperar o timeout).
+        if (static const uint64_t stopAt = std::getenv("PS2X_STOP_VSYNC") ? std::strtoull(std::getenv("PS2X_STOP_VSYNC"), nullptr, 10) : 0;
+            stopAt != 0 && m_vsyncTick == stopAt)
+        {
+            std::fprintf(stderr, "[stop] PS2X_STOP_VSYNC=%llu\n", static_cast<unsigned long long>(stopAt));
+            requestStop();
+        }
         // PS2X_VSYNC_LOG=1: a cada 60 VSyncs imprime quantos VSyncs por segundo real (60 = velocidade de PS2).
         if (static const bool vsyncLog = std::getenv("PS2X_VSYNC_LOG") != nullptr; vsyncLog && m_vsyncTick % 60u == 0u)
         {

@@ -2472,9 +2472,10 @@ void PS2Runtime::run()
 
     uint64_t tick = 0;
     // PS2X_DUMP_RAM="seconds:path": writes the 32MB EE RAM once after that many seconds (debug aid).
+    // The "v<vsync>:path" form is handled at VBlank in EeScheduler.cpp.
     const char *dumpRamSpec = std::getenv("PS2X_DUMP_RAM");
     const auto dumpRamStart = std::chrono::steady_clock::now();
-    bool dumpRamDone = (dumpRamSpec == nullptr);
+    bool dumpRamDone = (dumpRamSpec == nullptr || dumpRamSpec[0] == 'v');
     while (!isStopRequested() && !gameThreadFinished.load(std::memory_order_acquire))
     {
         if (!dumpRamDone)

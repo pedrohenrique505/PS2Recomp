@@ -82,11 +82,13 @@ namespace ps2_stubs
 
         struct AutoPadStep
         {
-            double start;
+            double start; // segundos de relógio, ou VSyncs se vsync
             uint16_t mask;
+            bool vsync;
         };
 
-        // Lê PS2X_AUTOX; itens com botão desconhecido são ignorados com aviso. Devolve em ordem de tempo.
+        // Lê PS2X_AUTOX; itens com botão desconhecido, ou numa unidade diferente da do primeiro item, são
+        // ignorados com aviso. Devolve em ordem de tempo.
         std::vector<AutoPadStep> parseAutoPad(const char *spec)
         {
             static const struct
@@ -112,12 +114,13 @@ namespace ps2_stubs
                     if (button == n.name)
                         mask = n.mask;
                 }
-                if (mask == 0 || item.empty())
+                const bool vsync = !item.empty() && item[0] == 'v';
+                if (mask == 0 || item.empty() || (!steps.empty() && steps.front().vsync != vsync))
                 {
                     std::fprintf(stderr, "[pad] PS2X_AUTOX: item ignorado \"%s\"\n", item.c_str());
                     continue;
                 }
-                steps.push_back({std::atof(item.c_str()), mask});
+                steps.push_back({std::atof(item.c_str() + (vsync ? 1 : 0)), mask, vsync});
             }
             std::stable_sort(steps.begin(), steps.end(),
                              [](const AutoPadStep &a, const AutoPadStep &b) { return a.start < b.start; });
@@ -367,18 +370,23 @@ namespace ps2_stubs
 
             // PS2X_AUTOX="<seg>[:<botão>][,<seg>:<botão>...]": a partir de cada <seg> pulsa o botão (300 ms ligado,
             // 300 ms desligado) até o próximo item, para medir sem teclado. Sem botão é X: "20" = "20:cross".
+            // Com "v<N>" o tempo é o VSync emulado (pulso de 18 VSyncs), que não depende do ritmo do host.
             static const std::vector<AutoPadStep> autoPad = parseAutoPad(std::getenv("PS2X_AUTOX"));
             if (!autoPad.empty())
             {
                 static const auto t0 = std::chrono::steady_clock::now();
-                const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+                const bool vsync = autoPad.front().vsync;
+                const double t = vsync && runtime
+                                     ? static_cast<double>(runtime->memory().gs().vsyncTick.load(std::memory_order_acquire))
+                                     : std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+                const double period = vsync ? 18.0 : 0.3;
                 const AutoPadStep *step = nullptr;
                 for (const AutoPadStep &s : autoPad)
                 {
                     if (t >= s.start)
                         step = &s;
                 }
-                if (step && (static_cast<long>((t - step->start) * 1000.0) / 300) % 2 == 0)
+                if (step && static_cast<long>((t - step->start) / period) % 2 == 0)
                     setButton(state, step->mask, true);
             }
 
