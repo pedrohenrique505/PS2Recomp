@@ -718,6 +718,13 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
                         continue;
                     }
 
+                    // V2 escreve XYXY no hardware; ZW não preservam o destino anterior.
+                    if (handledFormat && decoded && vn == 1u)
+                    {
+                        decompressed[2] = decompressed[0];
+                        decompressed[3] = decompressed[1];
+                    }
+
                     const bool canAdd = (vl != 3u || vn != 3u);
                     const uint32_t mode = vif1_regs.mode & 3u;
                     const uint32_t colIdx = (cyclePos > 3u) ? 3u : cyclePos;
