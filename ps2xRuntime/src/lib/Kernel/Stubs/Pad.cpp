@@ -1,7 +1,11 @@
 #include "Common.h"
 #include "Pad.h"
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
 
 namespace ps2_stubs
 {
@@ -74,6 +78,50 @@ namespace ps2_stubs
             axis = std::clamp(axis, -1.0f, 1.0f);
             const float mapped = (axis + 1.0f) * 127.5f;
             return static_cast<uint8_t>(std::lround(mapped));
+        }
+
+        struct AutoPadStep
+        {
+            double start;
+            uint16_t mask;
+        };
+
+        // Lê PS2X_AUTOX; itens com botão desconhecido são ignorados com aviso. Devolve em ordem de tempo.
+        std::vector<AutoPadStep> parseAutoPad(const char *spec)
+        {
+            static const struct
+            {
+                const char *name;
+                uint16_t mask;
+            } kNames[] = {{"cross", kPadBtnCross}, {"circle", kPadBtnCircle}, {"triangle", kPadBtnTriangle},
+                          {"square", kPadBtnSquare}, {"start", kPadBtnStart}, {"select", kPadBtnSelect},
+                          {"up", kPadBtnUp}, {"down", kPadBtnDown}, {"left", kPadBtnLeft}, {"right", kPadBtnRight},
+                          {"l1", kPadBtnL1}, {"l2", kPadBtnL2}, {"r1", kPadBtnR1}, {"r2", kPadBtnR2}};
+            std::vector<AutoPadStep> steps;
+            std::string rest = spec ? spec : "";
+            while (!rest.empty())
+            {
+                const size_t comma = rest.find(',');
+                const std::string item = rest.substr(0, comma);
+                rest = comma == std::string::npos ? std::string() : rest.substr(comma + 1);
+                const size_t colon = item.find(':');
+                const std::string button = colon == std::string::npos ? "cross" : item.substr(colon + 1);
+                uint16_t mask = 0;
+                for (const auto &n : kNames)
+                {
+                    if (button == n.name)
+                        mask = n.mask;
+                }
+                if (mask == 0 || item.empty())
+                {
+                    std::fprintf(stderr, "[pad] PS2X_AUTOX: item ignorado \"%s\"\n", item.c_str());
+                    continue;
+                }
+                steps.push_back({std::atof(item.c_str()), mask});
+            }
+            std::stable_sort(steps.begin(), steps.end(),
+                             [](const AutoPadStep &a, const AutoPadStep &b) { return a.start < b.start; });
+            return steps;
         }
 
         void setButton(PadInputState &state, uint16_t mask, bool pressed)
@@ -317,14 +365,21 @@ namespace ps2_stubs
                 }
             }
 
-            // PS2X_AUTOX=<seg>: a partir de <seg> segundos pulsa X (300 ms ligado, 300 ms desligado), para medir sem teclado
-            static const double autoXStart = std::getenv("PS2X_AUTOX") ? std::atof(std::getenv("PS2X_AUTOX")) : -1.0;
-            if (autoXStart >= 0.0)
+            // PS2X_AUTOX="<seg>[:<botão>][,<seg>:<botão>...]": a partir de cada <seg> pulsa o botão (300 ms ligado,
+            // 300 ms desligado) até o próximo item, para medir sem teclado. Sem botão é X: "20" = "20:cross".
+            static const std::vector<AutoPadStep> autoPad = parseAutoPad(std::getenv("PS2X_AUTOX"));
+            if (!autoPad.empty())
             {
                 static const auto t0 = std::chrono::steady_clock::now();
                 const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-                if (t >= autoXStart && (static_cast<long>((t - autoXStart) * 1000.0) / 300) % 2 == 0)
-                    setButton(state, kPadBtnCross, true);
+                const AutoPadStep *step = nullptr;
+                for (const AutoPadStep &s : autoPad)
+                {
+                    if (t >= s.start)
+                        step = &s;
+                }
+                if (step && (static_cast<long>((t - step->start) * 1000.0) / 300) % 2 == 0)
+                    setButton(state, step->mask, true);
             }
 
             fillPadStatus(outData, state, portState);
