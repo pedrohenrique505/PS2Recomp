@@ -2,6 +2,7 @@
 #include "CD.h"
 #include "MPEG.h"
 #include "runtime/ee_scheduler.h"
+#include "FixedClock.h"
 
 namespace ps2_stubs
 {
@@ -528,6 +529,7 @@ namespace ps2_stubs
 #else
         localtime_r(&now, &localTm);
 #endif
+        applyFixedClock(localTm);
 
         // sceCdCLOCK format (BCD fields).
         clockData[0] = 0;

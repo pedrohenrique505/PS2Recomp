@@ -1,5 +1,6 @@
 #include "Common.h"
 #include "MemoryCard.h"
+#include "FixedClock.h"
 
 namespace ps2_stubs
 {
@@ -254,6 +255,8 @@ namespace ps2_stubs
 
         bool localtimeSafeMc(const std::time_t *value, std::tm *out)
         {
+            if (applyFixedClock(*out))
+                return true;
 #ifdef _WIN32
             return localtime_s(out, value) == 0;
 #else

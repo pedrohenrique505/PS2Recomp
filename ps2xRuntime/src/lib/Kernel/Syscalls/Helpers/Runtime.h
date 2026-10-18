@@ -146,6 +146,8 @@ inline std::string translatePs2Path(const char *ps2Path)
 
 static bool localtimeSafe(const std::time_t *t, std::tm *out)
 {
+    if (applyFixedClock(*out))
+        return true;
 #ifdef _WIN32
     return localtime_s(out, t) == 0;
 #else
