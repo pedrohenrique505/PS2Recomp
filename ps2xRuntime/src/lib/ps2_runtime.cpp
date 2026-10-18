@@ -733,6 +733,14 @@ bool PS2Runtime::syncCoreSubsystems()
                                                    m_gs, &m_memory, startPC, top, itop, 65536);
                                      if (g_vu1Prof.on)
                                          g_vu1Prof.add(std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - profT0).count(), m_vu1.state().cycles - profC0, g_gsSubmitNs.load() - profG0);
+                                     // O VIF síncrono já esperou o VU1: avance também timers, VBlank e IOP.
+                                     // PS2X_VU1_ACCOUNT_CYCLES=0 permite comparar com o comportamento antigo.
+                                     static const bool accountVu1 = []() {
+                                         const char *v = std::getenv("PS2X_VU1_ACCOUNT_CYCLES");
+                                         return !v || std::strcmp(v, "0") != 0;
+                                     }();
+                                     if (accountVu1 && m_eeScheduler)
+                                         m_eeScheduler->accountCycles(static_cast<uint32_t>(m_vu1.state().cycles - profC0));
                                      cpuContext->vu0_vpu_stat =
                                          (cpuContext->vu0_vpu_stat & ~0x0600u) |
                                          (m_vu1.state().stoppedByD ? 0x0200u : 0u) |
@@ -756,6 +764,14 @@ bool PS2Runtime::syncCoreSubsystems()
                                                   m_gs, &m_memory, top, itop, 65536);
                                      if (g_vu1Prof.on)
                                          g_vu1Prof.add(std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - profT0).count(), m_vu1.state().cycles - profC0, g_gsSubmitNs.load() - profG0);
+                                     // O VIF síncrono já esperou o VU1: avance também timers, VBlank e IOP.
+                                     // PS2X_VU1_ACCOUNT_CYCLES=0 permite comparar com o comportamento antigo.
+                                     static const bool accountVu1 = []() {
+                                         const char *v = std::getenv("PS2X_VU1_ACCOUNT_CYCLES");
+                                         return !v || std::strcmp(v, "0") != 0;
+                                     }();
+                                     if (accountVu1 && m_eeScheduler)
+                                         m_eeScheduler->accountCycles(static_cast<uint32_t>(m_vu1.state().cycles - profC0));
                                      cpuContext->vu0_vpu_stat =
                                          (cpuContext->vu0_vpu_stat & ~0x0600u) |
                                          (m_vu1.state().stoppedByD ? 0x0200u : 0u) |
