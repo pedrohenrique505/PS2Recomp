@@ -17,6 +17,43 @@
 
 namespace
 {
+    // Formato local, dependente da ABI; capturas contêm dados do jogo.
+    struct VuCapture
+    {
+        FILE *file = nullptr;
+        VU1State &state;
+        uint8_t *data;
+        uint32_t dataSize;
+        VuCapture(VU1State &s, uint8_t *code, uint32_t codeSize,
+                  uint8_t *d, uint32_t size, PS2Memory *memory,
+                  uint32_t pc, uint32_t top, uint32_t itop, uint32_t budget,
+                  bool enabled) : state(s), data(d), dataSize(size)
+        {
+            static const char *directory = std::getenv("PS2X_VU1_CAPTURE");
+            static const uint64_t tick = []() { const char *v = std::getenv("PS2X_VU1_CAPTURE_VSYNC"); return v ? std::strtoull(v, nullptr, 0) : 370ull; }();
+            static uint32_t sequence = 0;
+            static const bool captureVu0 = std::getenv("PS2X_VU0_CAPTURE") != nullptr;
+            if ((enabled == captureVu0) || !directory || !memory || memory->gs().vsyncTick.load(std::memory_order_acquire) != tick)
+                return;
+            char path[4096];
+            std::snprintf(path, sizeof(path), "%s/%06u.vu", directory, ++sequence);
+            file = std::fopen(path, "wb");
+            if (!file) { std::perror(path); return; }
+            const uint32_t header[] = {0x31555650u, sizeof(VU1State), codeSize, dataSize, pc, top, itop, budget};
+            std::fwrite(header, sizeof(header), 1, file);
+            std::fwrite(&state, sizeof(state), 1, file);
+            std::fwrite(code, codeSize, 1, file);
+            std::fwrite(data, dataSize, 1, file);
+        }
+        ~VuCapture()
+        {
+            if (!file) return;
+            std::fwrite(&state, sizeof(state), 1, file);
+            std::fwrite(data, dataSize, 1, file);
+            std::fclose(file);
+        }
+    };
+
     constexpr uint8_t laneForComponent(uint32_t component)
     {
         return static_cast<uint8_t>(1u << (3u - component));
@@ -1637,6 +1674,8 @@ void VU1Interpreter::execute(uint8_t *vuCode, uint32_t codeSize,
                              uint32_t startPC, uint32_t top, uint32_t itop,
                              uint32_t maxCycles)
 {
+    VuCapture capture(m_state, vuCode, codeSize, vuData, dataSize, memory,
+                      startPC, top, itop, maxCycles, m_unit == Unit::VU1);
     resetScheduler();
     m_state.pc = startPC & microAddressMask();
     m_state.ebit = false;
@@ -1653,6 +1692,7 @@ void VU1Interpreter::execute(uint8_t *vuCode, uint32_t codeSize,
     m_state.vf[0][2] = 0.0f;
     m_state.vf[0][3] = 1.0f;
     run(vuCode, codeSize, vuData, dataSize, gs, memory, maxCycles);
+
 }
 
 void VU1Interpreter::resume(uint8_t *vuCode, uint32_t codeSize,
@@ -1660,6 +1700,8 @@ void VU1Interpreter::resume(uint8_t *vuCode, uint32_t codeSize,
                             GS &gs, PS2Memory *memory,
                             uint32_t top, uint32_t itop, uint32_t maxCycles)
 {
+    VuCapture capture(m_state, vuCode, codeSize, vuData, dataSize, memory,
+                      m_state.pc, top, itop, maxCycles, m_unit == Unit::VU1);
     m_state.top = top;
     m_state.itop = itop;
     m_state.stoppedByD = false;
