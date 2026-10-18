@@ -48,6 +48,24 @@ namespace
         }
     }
 
+    void multiPageRetention()
+    {
+        BackendFixture f;
+        // Quatro páginas físicas distintas, como um filtro na interseção de páginas.
+        for (uint32_t base : {32u, 64u, 96u, 128u})
+        {
+            f.backend.WriteVram(GS_PSM_CT32, base, 2, 0, 0, kRed);
+            expectEqual(f.sample(texture(GS_PSM_CT32, base)), kRed, "prime physical page");
+            f.backend.WriteVram(GS_PSM_CT32, base, 2, 0, 0, kGreen);
+        }
+        for (unsigned repeat = 0; repeat < 8; ++repeat)
+            for (uint32_t base : {32u, 64u, 96u, 128u})
+                expectEqual(f.sample(texture(GS_PSM_CT32, base)), kRed, "alternation retains cached pages");
+        f.backend.TextureFlush();
+        for (uint32_t base : {32u, 64u, 96u, 128u})
+            expectEqual(f.sample(texture(GS_PSM_CT32, base)), kGreen, "TEXFLUSH invalidates every slot");
+    }
+
     void flushVisibility()
     {
         BackendFixture f;
@@ -169,6 +187,7 @@ int main(int argc, char** argv)
     return run(argc, argv, {
         {"unaligned_texture", unalignedTexture}, {"unaligned_wrap", unalignedWrap},
         {"stale_mirror", staleMirror}, {"page_alternation", pageAlternation},
+        {"multi_page_retention", multiPageRetention},
         {"flush_visibility", flushVisibility}, {"upload_visibility", uploadVisibility},
         {"local_copy_visibility", localCopyVisibility}, {"raster_visibility", rasterVisibility},
         {"reset_and_rebind", resetAndRebind}, {"invalid_vram_size", invalidVramSize},

@@ -42,7 +42,7 @@ function(add_gs_cache_suite target source prefix)
 endfunction()
 
 add_gs_cache_suite(ps2_gs_texture_cache_tests gs_texture_cache_tests.cpp texture
-    unaligned_texture unaligned_wrap stale_mirror page_alternation
+    unaligned_texture unaligned_wrap stale_mirror page_alternation multi_page_retention
     flush_visibility upload_visibility local_copy_visibility raster_visibility
     reset_and_rebind invalid_vram_size reserved_psm)
 
