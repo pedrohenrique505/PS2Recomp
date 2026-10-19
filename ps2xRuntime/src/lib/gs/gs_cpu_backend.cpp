@@ -7,6 +7,7 @@
 #include "runtime/gs/ps2_gs_psmt8.h"
 #include "runtime/gs/ps2_gs_memory.h"
 #include "ps2_log.h"
+#include "gs_bilinear.h"
 #include <atomic>
 #include <vector>
 #include <cstdlib>
@@ -297,12 +298,7 @@ namespace
         return psm == GS_PSM_T8 || psm == GS_PSM_T8H;
     }
 
-    uint8_t lerpChannel(uint8_t c00, uint8_t c10, uint8_t c01, uint8_t c11, float fx, float fy)
-    {
-        const float top = static_cast<float>(c00) + (static_cast<float>(c10) - static_cast<float>(c00)) * fx;
-        const float bottom = static_cast<float>(c01) + (static_cast<float>(c11) - static_cast<float>(c01)) * fx;
-        return clampU8(static_cast<int>(static_cast<double>(top + (bottom - top) * fy) + 0.5)); // = lround para valores >= 0, sem chamada de funcao
-    }
+
 }
 
 namespace
@@ -1179,31 +1175,7 @@ uint32_t GSCpuBackend::SampleTexture(const GSDrawState &state, float s, float t,
     const uint32_t c01 = samplePoint(u0, v1);
     const uint32_t c11 = samplePoint(u1, v1);
 
-    const uint8_t r = lerpChannel(static_cast<uint8_t>(c00 & 0xFFu),
-                                  static_cast<uint8_t>(c10 & 0xFFu),
-                                  static_cast<uint8_t>(c01 & 0xFFu),
-                                  static_cast<uint8_t>(c11 & 0xFFu),
-                                  fx, fy);
-    const uint8_t g = lerpChannel(static_cast<uint8_t>((c00 >> 8) & 0xFFu),
-                                  static_cast<uint8_t>((c10 >> 8) & 0xFFu),
-                                  static_cast<uint8_t>((c01 >> 8) & 0xFFu),
-                                  static_cast<uint8_t>((c11 >> 8) & 0xFFu),
-                                  fx, fy);
-    const uint8_t b = lerpChannel(static_cast<uint8_t>((c00 >> 16) & 0xFFu),
-                                  static_cast<uint8_t>((c10 >> 16) & 0xFFu),
-                                  static_cast<uint8_t>((c01 >> 16) & 0xFFu),
-                                  static_cast<uint8_t>((c11 >> 16) & 0xFFu),
-                                  fx, fy);
-    const uint8_t a = lerpChannel(static_cast<uint8_t>((c00 >> 24) & 0xFFu),
-                                  static_cast<uint8_t>((c10 >> 24) & 0xFFu),
-                                  static_cast<uint8_t>((c01 >> 24) & 0xFFu),
-                                  static_cast<uint8_t>((c11 >> 24) & 0xFFu),
-                                  fx, fy);
-
-    return static_cast<uint32_t>(r) |
-           (static_cast<uint32_t>(g) << 8) |
-           (static_cast<uint32_t>(b) << 16) |
-           (static_cast<uint32_t>(a) << 24);
+    return GSInternal::bilinearColor(c00, c10, c01, c11, fx, fy);
 }
 
 void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
