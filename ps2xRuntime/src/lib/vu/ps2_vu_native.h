@@ -524,11 +524,8 @@ struct VUNativeAccess
         const bool hasLowerWrite = lowerWrite.reg != 0u && decoded.suppressedLowerVf != lowerWrite.reg;
         const bool hasDistinctLowerWrite = hasLowerWrite && (!hasUpperWrite || lowerWrite.reg != upperWrite.reg);
         float oldUpperVf[4]{};
-        float newUpperVf[4]{};
         float oldLowerVf[4]{};
-        float newLowerVf[4]{};
         float oldAcc[4]{};
-        float newAcc[4]{};
         if (hasUpperWrite)
             std::memcpy(oldUpperVf, vu.m_state.vf[upperWrite.reg], sizeof(oldUpperVf));
         if (hasDistinctLowerWrite)
@@ -570,43 +567,34 @@ struct VUNativeAccess
 
         vu.m_viBranchBackupValid = false;
 
+        // Escrita imediata (ver VU1Interpreter::ImmediateWrite), na mesma ordem em que a
+        // referência enfileirava. A escrita do upper ocupa só as pistas dele no registrador.
         if (hasUpperWrite)
         {
-            std::memcpy(newUpperVf, vu.m_state.vf[upperWrite.reg], sizeof(newUpperVf));
-            std::memcpy(vu.m_state.vf[upperWrite.reg], oldUpperVf, sizeof(oldUpperVf));
-            const uint32_t latency =
-                decoded.upperUsage.vfLatency != 0u
-                    ? decoded.upperUsage.vfLatency
-                    : decoded.upperUsage.latency;
-            vu.queueVfWrite(upperWrite.reg, upperWrite.lanes, newUpperVf, latency);
+            float *reg = vu.m_state.vf[upperWrite.reg];
+            for (uint32_t c = 0; c < 4u; ++c)
+                if ((upperWrite.lanes & (8u >> c)) == 0u)
+                    reg[c] = oldUpperVf[c];
+            const uint32_t latency = decoded.upperUsage.vfLatency != 0u ? decoded.upperUsage.vfLatency : decoded.upperUsage.latency;
+            vu.logImmediateWrite(VU1Interpreter::ImmediateWrite::Kind::Vf, upperWrite.reg, upperWrite.lanes,
+                                 oldUpperVf, reg, 0, 0, latency);
         }
         if (hasDistinctLowerWrite)
         {
-            std::memcpy(newLowerVf, vu.m_state.vf[lowerWrite.reg], sizeof(newLowerVf));
-            std::memcpy(vu.m_state.vf[lowerWrite.reg], oldLowerVf, sizeof(oldLowerVf));
-            const uint32_t latency = decoded.lowerUsage.vfLatency != 0u
-                                         ? decoded.lowerUsage.vfLatency
-                                         : decoded.lowerUsage.latency;
-            vu.queueVfWrite(lowerWrite.reg, lowerWrite.lanes, newLowerVf, latency);
+            const uint32_t latency = decoded.lowerUsage.vfLatency != 0u ? decoded.lowerUsage.vfLatency : decoded.lowerUsage.latency;
+            vu.logImmediateWrite(VU1Interpreter::ImmediateWrite::Kind::Vf, lowerWrite.reg, lowerWrite.lanes,
+                                 oldLowerVf, vu.m_state.vf[lowerWrite.reg], 0, 0, latency);
         }
         if (decoded.upperUsage.accWrite != 0u)
-        {
-            std::memcpy(newAcc, vu.m_state.acc, sizeof(newAcc));
-            std::memcpy(vu.m_state.acc, oldAcc, sizeof(oldAcc));
-            // ACC is forwarded to the next upper instruction. Its arithmetic
-            // flags still use the normal four-cycle FMAC timeline.
-            vu.queueAccWrite(decoded.upperUsage.accWrite, newAcc,
-                          VU1Interpreter::kAccForwardLatency);
-        }
+            vu.logImmediateWrite(VU1Interpreter::ImmediateWrite::Kind::Acc, 0, decoded.upperUsage.accWrite,
+                                 oldAcc, vu.m_state.acc, 0, 0, VU1Interpreter::kAccForwardLatency);
         if (writtenVi != 0u)
         {
-            const int32_t newVi = vu.m_state.vi[writtenVi];
-            vu.m_state.vi[writtenVi] = oldVi;
-            const uint32_t latency =
-                decoded.lowerUsage.viLatency != 0u
-                    ? decoded.lowerUsage.viLatency
-                    : decoded.lowerUsage.latency;
-            vu.queueViWrite(writtenVi, newVi, latency);
+            const int32_t newVi = static_cast<int16_t>(vu.m_state.vi[writtenVi]);
+            vu.m_state.vi[writtenVi] = newVi;
+            const uint32_t latency = decoded.lowerUsage.viLatency != 0u ? decoded.lowerUsage.viLatency : decoded.lowerUsage.latency;
+            vu.logImmediateWrite(VU1Interpreter::ImmediateWrite::Kind::Vi, writtenVi, 0, nullptr, nullptr,
+                                 oldVi, newVi, latency);
         }
 
         markWrites(vu, decoded);

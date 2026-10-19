@@ -179,6 +179,23 @@ private:
         bool valid = false;
     };
 
+    // VF/VI/ACC results are written when issued: every read waits in pairReady
+    // until the producer's latency has passed, so it sees the same value the
+    // write queues would have committed. The log keeps the previous value of
+    // writes still in flight, to rebuild those queues if execution stops early.
+    struct ImmediateWrite
+    {
+        enum class Kind : uint8_t { Vf, Vi, Acc };
+        uint64_t readyCycle = 0;
+        std::array<float, 4> oldValue{};
+        std::array<float, 4> newValue{};
+        int32_t oldVi = 0;
+        int32_t newVi = 0;
+        uint8_t reg = 0;
+        uint8_t laneMask = 0;
+        Kind kind = Kind::Vf;
+    };
+
     struct XgkickPipeline
     {
         static constexpr uint32_t kBufferSize = 0x10000u;
@@ -201,6 +218,7 @@ private:
     static constexpr uint32_t kMaxPendingViWrites = 8u;
     static constexpr uint32_t kMaxPendingAccWrites = 8u;
     static constexpr uint32_t kMaxDecodedPairs = 0x4000u / 8u;
+    static constexpr uint32_t kImmediateLogSize = 32u;
 
     Unit m_unit;
     VU1State m_state;
@@ -228,6 +246,8 @@ private:
     uint32_t m_viWriteActive = 0;
     uint32_t m_accWriteActive = 0;
     XgkickPipeline m_xgkick{};
+    std::array<ImmediateWrite, kImmediateLogSize> m_immediateLog{};
+    uint32_t m_immediateLogNext = 0;
     std::array<std::array<uint64_t, 4>, 32> m_vfReady{};
     std::array<uint64_t, 16> m_viReady{};
     std::array<uint64_t, 4> m_accReady{};
@@ -287,6 +307,10 @@ private:
     void queueViWrite(uint8_t reg, int32_t value, uint32_t latency);
     void queueAccWrite(uint8_t laneMask, const float value[4], uint32_t latency);
     void startXgkick(uint32_t qwordAddress);
+    void logImmediateWrite(ImmediateWrite::Kind kind, uint8_t reg, uint8_t laneMask,
+                           const float *oldValue, const float *newValue,
+                           int32_t oldVi, int32_t newVi, uint32_t latency);
+    void materializeImmediateWrites();
 
     void resetScheduler();
     void commitReadyPipelines();

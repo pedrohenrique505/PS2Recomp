@@ -161,6 +161,8 @@ void VU1Interpreter::resetScheduler()
     m_xgkick.issueCycle = 0;
     m_xgkick.active = false;
     m_xgkick.currentTagEop = false;
+    m_immediateLog = {};
+    m_immediateLogNext = 0;
     m_vfReady = {};
     m_viReady = {};
     m_accReady = {};
@@ -516,6 +518,91 @@ void VU1Interpreter::queueVfWrite(uint8_t reg, uint8_t laneMask,
         }
     }
     reportReservedInstruction(false, 0xFFFFFFF7u);
+}
+
+void VU1Interpreter::logImmediateWrite(ImmediateWrite::Kind kind, uint8_t reg, uint8_t laneMask,
+                                       const float *oldValue, const float *newValue,
+                                       int32_t oldVi, int32_t newVi, uint32_t latency)
+{
+    ImmediateWrite &entry = m_immediateLog[m_immediateLogNext];
+    m_immediateLogNext = (m_immediateLogNext + 1u) % kImmediateLogSize;
+    entry.kind = kind;
+    entry.reg = reg;
+    entry.laneMask = laneMask;
+    entry.readyCycle = m_cycle + latency;
+    entry.oldVi = oldVi;
+    entry.newVi = newVi;
+    if (oldValue)
+    {
+        std::memcpy(entry.oldValue.data(), oldValue, sizeof(float) * 4u);
+        std::memcpy(entry.newValue.data(), newValue, sizeof(float) * 4u);
+    }
+    // Uma escrita enfileirada antes (materializada numa parada anterior) não pode
+    // sobrescrever esta ao chegar: a fila só aplica a escrita mais recente.
+    if (kind == ImmediateWrite::Kind::Vf && m_vfWriteActive != 0u)
+    {
+        for (uint32_t component = 0; component < 4u; ++component)
+            if ((laneMask & laneForComponent(component)) != 0u)
+                m_vfLatestWrite[reg][component] = UINT64_MAX;
+    }
+    else if (kind == ImmediateWrite::Kind::Vi && m_viWriteActive != 0u)
+        m_viLatestWrite[reg] = UINT64_MAX;
+    else if (kind == ImmediateWrite::Kind::Acc && m_accWriteActive != 0u)
+    {
+        for (uint32_t component = 0; component < 4u; ++component)
+            if ((laneMask & laneForComponent(component)) != 0u)
+                m_accLatestWrite[component] = UINT64_MAX;
+    }
+}
+
+void VU1Interpreter::materializeImmediateWrites()
+{
+    // O valor visível de cada pista é o anterior à escrita em voo mais antiga
+    // que a toca; depois todas voltam às filas, em ordem de emissão.
+    std::array<std::array<bool, 4>, 32> vfRestored{};
+    std::array<bool, 16> viRestored{};
+    std::array<bool, 4> accRestored{};
+    for (uint32_t k = 0; k < kImmediateLogSize; ++k)
+    {
+        const ImmediateWrite &entry = m_immediateLog[(m_immediateLogNext + k) % kImmediateLogSize];
+        if (entry.readyCycle <= m_cycle)
+            continue;
+        for (uint32_t component = 0; component < 4u; ++component)
+        {
+            if ((entry.laneMask & laneForComponent(component)) == 0u)
+                continue;
+            if (entry.kind == ImmediateWrite::Kind::Vf && !vfRestored[entry.reg][component])
+            {
+                m_state.vf[entry.reg][component] = entry.oldValue[component];
+                vfRestored[entry.reg][component] = true;
+            }
+            else if (entry.kind == ImmediateWrite::Kind::Acc && !accRestored[component])
+            {
+                m_state.acc[component] = entry.oldValue[component];
+                accRestored[component] = true;
+            }
+        }
+        if (entry.kind == ImmediateWrite::Kind::Vi && !viRestored[entry.reg])
+        {
+            m_state.vi[entry.reg] = entry.oldVi;
+            viRestored[entry.reg] = true;
+        }
+    }
+    for (uint32_t k = 0; k < kImmediateLogSize; ++k)
+    {
+        ImmediateWrite &entry = m_immediateLog[(m_immediateLogNext + k) % kImmediateLogSize];
+        if (entry.readyCycle > m_cycle)
+        {
+            const uint32_t latency = static_cast<uint32_t>(entry.readyCycle - m_cycle);
+            if (entry.kind == ImmediateWrite::Kind::Vf)
+                queueVfWrite(entry.reg, entry.laneMask, entry.newValue.data(), latency);
+            else if (entry.kind == ImmediateWrite::Kind::Acc)
+                queueAccWrite(entry.laneMask, entry.newValue.data(), latency);
+            else
+                queueViWrite(entry.reg, entry.newVi, latency);
+        }
+        entry = {};
+    }
 }
 
 void VU1Interpreter::queueViWrite(uint8_t reg, int32_t value, uint32_t latency)
@@ -1456,6 +1543,8 @@ void VU1Interpreter::run(uint8_t *vuCode, uint32_t codeSize,
         }
     }
 
+    if (!programEnded)
+        materializeImmediateWrites();
     if (programEnded)
     {
         flushPipelines();
