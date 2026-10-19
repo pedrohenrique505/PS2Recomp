@@ -154,6 +154,7 @@ namespace
         0x10001000u,
         0x10001800u,
     };
+    constexpr uint32_t kIntcStatAddress = 0x1000F000u;
     constexpr uint32_t kEeTimerCountOffset = 0x00u;
     constexpr uint32_t kEeTimerModeOffset = 0x10u;
     constexpr uint32_t kEeTimerCompareOffset = 0x20u;
@@ -1212,6 +1213,12 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
         {
             m_ioRegisters[address] = value;
         }
+        return true;
+    }
+
+    if (address == kIntcStatAddress)
+    {
+        m_ioRegisters[address] &= ~value;
         return true;
     }
 
@@ -2300,6 +2307,14 @@ bool PS2Memory::tryProcessNativeGifPackedChain(GS &gs, uint32_t tadr, uint32_t c
 int PS2Memory::pollDmaRegisters()
 {
     return 0;
+}
+
+void PS2Memory::raiseIntcStatus(uint32_t cause)
+{
+    if (cause < 32u)
+    {
+        m_ioRegisters[kIntcStatAddress] |= 1u << cause;
+    }
 }
 
 uint32_t PS2Memory::readIORegister(uint32_t address)

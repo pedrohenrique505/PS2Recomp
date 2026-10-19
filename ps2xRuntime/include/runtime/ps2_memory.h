@@ -307,6 +307,10 @@ public:
     bool writeIORegister(uint32_t address, uint32_t value);
     uint32_t readIORegister(uint32_t address);
 
+    // INTC_STAT is write-one-to-clear. Sources set their cause bit whether or
+    // not that cause is enabled in INTC_MASK, so software can poll it.
+    void raiseIntcStatus(uint32_t cause);
+
     // EE timers advance from the scheduler's emulated EE-cycle clock. The
     // returned mask uses bits 0..3 for newly raised TIM0..TIM3 interrupts.
     uint32_t advanceEeTimers(uint64_t eeCycles) noexcept;
