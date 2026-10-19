@@ -2,6 +2,7 @@
 #include "runtime/ps2_address.h"
 #include "runtime/gs/gs_frontend.h"
 #include "ps2_log.h"
+#include "FrameProfile.h"
 #include <atomic>
 #include <cstring>
 #include <limits>
@@ -2426,12 +2427,12 @@ uint32_t PS2Memory::readIORegister(uint32_t address)
     }
 
     auto it = m_ioRegisters.find(address);
-    if (it != m_ioRegisters.end())
+    const uint32_t value = it != m_ioRegisters.end() ? it->second : 0u;
+    if (address == kIntcStatAddress && frameprof::enabled())
     {
-        return it->second;
+        frameprof::onIntcStatRead(value);
     }
-
-    return 0;
+    return value;
 }
 
 void PS2Memory::registerCodeRegion(uint32_t start, uint32_t end)

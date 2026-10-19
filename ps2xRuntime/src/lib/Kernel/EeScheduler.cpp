@@ -2,6 +2,7 @@
 #include "runtime/ee_scheduler.h"
 
 #include "ps2_log.h"
+#include "FrameProfile.h"
 #include "ps2_runtime_macros.h"
 
 #include <algorithm>
@@ -1950,6 +1951,8 @@ void EeScheduler::processEvent(const EeEvent &event)
     case EeEventType::VBlankStart:
         ++m_vsyncTick;
         m_runtime.memory().gs().vsyncTick.store(m_vsyncTick, std::memory_order_release);
+        if (frameprof::enabled())
+            frameprof::onVBlank(m_vsyncTick, m_eeCycle);
         gsdump::onVSync(m_runtime.memory().gs(), m_vsyncTick);
         dumpMemoryAtVSync(m_runtime.memory(), m_vsyncTick);
         // PS2X_STOP_VSYNC=N: encerra a execução naquele VSync (verificações e medições sem esperar o timeout).

@@ -557,7 +557,7 @@ void GSCpuBackend::ResetUnlocked()
 }
 
 std::atomic<uint64_t> g_gsSubmitNs{0}; // PS2X_PROF: tempo acumulado no rasterizador
-static const bool g_gsProf = std::getenv("PS2X_PROF") != nullptr;
+static const bool g_gsProf = std::getenv("PS2X_PROF") != nullptr || std::getenv("PS2X_PROF_VSYNC") != nullptr;
 
 void GSCpuBackend::Submit(const GSPrimitiveBatch &batch)
 {

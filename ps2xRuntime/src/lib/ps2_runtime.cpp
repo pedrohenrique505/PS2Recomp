@@ -10,6 +10,7 @@
 #include "runtime/gs/gs_frontend.h"
 #include "runtime/ee_scheduler.h"
 #include "ThreadNaming.h"
+#include "FrameProfile.h"
 #include "Kernel/Stubs/Audio.h"
 #include "Kernel/Stubs/GS.h"
 #include "Kernel/Stubs/MPEG.h"
@@ -731,8 +732,16 @@ bool PS2Runtime::syncCoreSubsystems()
                                      m_vu1.execute(m_memory.getVU1Code(), PS2_VU1_CODE_SIZE,
                                                    m_memory.getVU1Data(), PS2_VU1_DATA_SIZE,
                                                    m_gs, &m_memory, startPC, top, itop, 65536);
-                                     if (g_vu1Prof.on)
-                                         g_vu1Prof.add(std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - profT0).count(), m_vu1.state().cycles - profC0, g_gsSubmitNs.load() - profG0);
+                                     if (g_vu1Prof.on || frameprof::enabled())
+                                     {
+                                         const double profNs = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - profT0).count();
+                                         const uint64_t profCycles = m_vu1.state().cycles - profC0;
+                                         const uint64_t profGs = g_gsSubmitNs.load() - profG0;
+                                         if (g_vu1Prof.on)
+                                             g_vu1Prof.add(profNs, profCycles, profGs);
+                                         if (frameprof::enabled())
+                                             frameprof::addVu1(static_cast<uint64_t>(profNs), profGs, profCycles);
+                                     }
                                      // O VIF síncrono já esperou o VU1: avance também timers, VBlank e IOP.
                                      // PS2X_VU1_ACCOUNT_CYCLES=0 permite comparar com o comportamento antigo.
                                      static const bool accountVu1 = []() {
@@ -762,8 +771,16 @@ bool PS2Runtime::syncCoreSubsystems()
                                      m_vu1.resume(m_memory.getVU1Code(), PS2_VU1_CODE_SIZE,
                                                   m_memory.getVU1Data(), PS2_VU1_DATA_SIZE,
                                                   m_gs, &m_memory, top, itop, 65536);
-                                     if (g_vu1Prof.on)
-                                         g_vu1Prof.add(std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - profT0).count(), m_vu1.state().cycles - profC0, g_gsSubmitNs.load() - profG0);
+                                     if (g_vu1Prof.on || frameprof::enabled())
+                                     {
+                                         const double profNs = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - profT0).count();
+                                         const uint64_t profCycles = m_vu1.state().cycles - profC0;
+                                         const uint64_t profGs = g_gsSubmitNs.load() - profG0;
+                                         if (g_vu1Prof.on)
+                                             g_vu1Prof.add(profNs, profCycles, profGs);
+                                         if (frameprof::enabled())
+                                             frameprof::addVu1(static_cast<uint64_t>(profNs), profGs, profCycles);
+                                     }
                                      // O VIF síncrono já esperou o VU1: avance também timers, VBlank e IOP.
                                      // PS2X_VU1_ACCOUNT_CYCLES=0 permite comparar com o comportamento antigo.
                                      static const bool accountVu1 = []() {
