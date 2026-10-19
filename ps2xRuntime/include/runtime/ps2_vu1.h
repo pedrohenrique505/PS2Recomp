@@ -218,7 +218,10 @@ private:
     std::array<PendingVfWrite, kMaxPendingVfWrites> m_vfWritePipeline{};
     std::array<PendingViWrite, kMaxPendingViWrites> m_viWritePipeline{};
     std::array<PendingAccWrite, kMaxPendingAccWrites> m_accWritePipeline{};
-    uint32_t m_flagActive = 0;
+    // Toda entrada de flags tem a mesma latência, então elas ficam prontas na ordem
+    // de emissão: uma fila circular basta e o commit para na primeira ainda pendente.
+    uint32_t m_flagHead = 0;
+    uint32_t m_flagCount = 0;
     uint32_t m_efuActive = 0;
     uint32_t m_storeActive = 0;
     uint32_t m_vfWriteActive = 0;
@@ -273,6 +276,7 @@ private:
     uint8_t normalizeFmacExactResult(float &value, long double exactResult) const;
     uint32_t calculateFmacProductSticky(uint8_t dest) const;
     void updateFmacFlags(const uint8_t laneFlags[4], uint8_t dest, uint32_t extraSticky);
+    FlagPipelineEntry *allocateFlagEntry();
     void queueFsset(uint16_t immediate);
     void queueClip(uint32_t clip);
     void queueFcset(uint32_t clip);

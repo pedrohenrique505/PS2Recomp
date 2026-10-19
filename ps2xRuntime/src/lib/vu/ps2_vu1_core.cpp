@@ -138,7 +138,8 @@ VU1Interpreter::VU1Interpreter(Unit unit)
 void VU1Interpreter::resetScheduler()
 {
     m_nextReady = 0;
-    m_flagActive = 0u;
+    m_flagHead = 0u;
+    m_flagCount = 0u;
     m_efuActive = 0u;
     m_storeActive = 0u;
     m_vfWriteActive = 0u;
@@ -327,24 +328,13 @@ void VU1Interpreter::updateFmacFlags(const uint8_t laneFlags[4], uint8_t dest,
         status |= flags;
     }
 
-    FlagPipelineEntry *entry = nullptr;
-    for (FlagPipelineEntry &candidate : m_flagPipeline)
-    {
-        if (!candidate.valid)
-        {
-            entry = &candidate;
-            break;
-        }
-    }
+    FlagPipelineEntry *entry = allocateFlagEntry();
     if (!entry)
     {
         reportReservedInstruction(true, 0xFFFFFFFFu);
         return;
     }
 
-    *entry = {};
-    entry->valid = true;
-    m_flagActive |= 1u << (entry - m_flagPipeline.data());
     entry->issueCycle = m_cycle;
     entry->readyCycle = m_cycle + kFmacLatency;
     noteReady(entry->readyCycle);
@@ -371,6 +361,17 @@ void VU1Interpreter::applyFmacDestAcc(float *result, uint8_t dest)
     applyDestAcc(result, dest);
 }
 
+VU1Interpreter::FlagPipelineEntry *VU1Interpreter::allocateFlagEntry()
+{
+    if (m_flagCount == kMaxFlagEntries)
+        return nullptr;
+    FlagPipelineEntry &entry = m_flagPipeline[(m_flagHead + m_flagCount) % kMaxFlagEntries];
+    ++m_flagCount;
+    entry = {};
+    entry.valid = true;
+    return &entry;
+}
+
 void VU1Interpreter::queueFsset(uint16_t immediate)
 {
     for (FlagPipelineEntry &entry : m_flagPipeline)
@@ -379,43 +380,33 @@ void VU1Interpreter::queueFsset(uint16_t immediate)
             entry.writesStatus = false;
     }
 
-    for (FlagPipelineEntry &entry : m_flagPipeline)
+    FlagPipelineEntry *entry = allocateFlagEntry();
+    if (!entry)
     {
-        if (!entry.valid)
-        {
-            entry = {};
-            entry.valid = true;
-            m_flagActive |= 1u << (&entry - m_flagPipeline.data());
-            entry.issueCycle = m_cycle;
-            entry.readyCycle = m_cycle + kFmacLatency;
-            noteReady(entry.readyCycle);
-            entry.status = static_cast<uint32_t>(immediate) & 0xFC0u;
-            entry.writesSticky = true;
-            return;
-        }
+        reportReservedInstruction(false, 0xFFFFFFFEu);
+        return;
     }
-    reportReservedInstruction(false, 0xFFFFFFFEu);
+    entry->issueCycle = m_cycle;
+    entry->readyCycle = m_cycle + kFmacLatency;
+    noteReady(entry->readyCycle);
+    entry->status = static_cast<uint32_t>(immediate) & 0xFC0u;
+    entry->writesSticky = true;
 }
 
 void VU1Interpreter::queueClip(uint32_t clip)
 {
     m_workingClip = ((m_workingClip << 6) | (clip & 0x3Fu)) & 0xFFFFFFu;
-    for (FlagPipelineEntry &entry : m_flagPipeline)
+    FlagPipelineEntry *entry = allocateFlagEntry();
+    if (!entry)
     {
-        if (!entry.valid)
-        {
-            entry = {};
-            entry.valid = true;
-            m_flagActive |= 1u << (&entry - m_flagPipeline.data());
-            entry.issueCycle = m_cycle;
-            entry.readyCycle = m_cycle + kFmacLatency;
-            noteReady(entry.readyCycle);
-            entry.clip = m_workingClip;
-            entry.writesClip = true;
-            return;
-        }
+        reportReservedInstruction(true, 0xFFFFFFFDu);
+        return;
     }
-    reportReservedInstruction(true, 0xFFFFFFFDu);
+    entry->issueCycle = m_cycle;
+    entry->readyCycle = m_cycle + kFmacLatency;
+    noteReady(entry->readyCycle);
+    entry->clip = m_workingClip;
+    entry->writesClip = true;
 }
 
 void VU1Interpreter::queueFcset(uint32_t clip)
@@ -426,22 +417,17 @@ void VU1Interpreter::queueFcset(uint32_t clip)
         if (entry.valid && entry.issueCycle == m_cycle)
             entry.writesClip = false;
     }
-    for (FlagPipelineEntry &entry : m_flagPipeline)
+    FlagPipelineEntry *entry = allocateFlagEntry();
+    if (!entry)
     {
-        if (!entry.valid)
-        {
-            entry = {};
-            entry.valid = true;
-            m_flagActive |= 1u << (&entry - m_flagPipeline.data());
-            entry.issueCycle = m_cycle;
-            entry.readyCycle = m_cycle + kFmacLatency;
-            noteReady(entry.readyCycle);
-            entry.clip = m_workingClip;
-            entry.writesClip = true;
-            return;
-        }
+        reportReservedInstruction(false, 0xFFFFFFFAu);
+        return;
     }
-    reportReservedInstruction(false, 0xFFFFFFFAu);
+    entry->issueCycle = m_cycle;
+    entry->readyCycle = m_cycle + kFmacLatency;
+    noteReady(entry->readyCycle);
+    entry->clip = m_workingClip;
+    entry->writesClip = true;
 }
 
 void VU1Interpreter::queueQ(float value, uint32_t latency, uint32_t statusDi)
@@ -582,16 +568,13 @@ void VU1Interpreter::commitReadyPipelines()
     uint64_t nextReady = UINT64_MAX;
     auto pending = [&nextReady](uint64_t c) { if (c < nextReady) nextReady = c; };
 
-    for (uint32_t active = m_flagActive; active != 0u; active &= active - 1u)
+    while (m_flagCount != 0u)
     {
-        const uint32_t index = std::countr_zero(active);
-        FlagPipelineEntry &entry = m_flagPipeline[index];
-        if (!entry.valid)
-            continue;
+        FlagPipelineEntry &entry = m_flagPipeline[m_flagHead];
         if (entry.readyCycle > m_cycle)
         {
             pending(entry.readyCycle);
-            continue;
+            break;
         }
 
         if (entry.writesMac)
@@ -608,7 +591,8 @@ void VU1Interpreter::commitReadyPipelines()
         if (entry.writesClip)
             m_state.clip = entry.clip;
         entry = {};
-        m_flagActive &= ~(1u << index);
+        m_flagHead = (m_flagHead + 1u) % kMaxFlagEntries;
+        --m_flagCount;
     }
 
     if (m_fdiv.valid && m_fdiv.readyCycle > m_cycle)
