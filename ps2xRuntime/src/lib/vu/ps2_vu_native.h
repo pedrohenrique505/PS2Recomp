@@ -665,7 +665,13 @@ struct VUNativeAccess
             vu.m_pendingHaltT = tHalt;
         }
 
-        vu.advanceOneCycle();
+        // advanceOneCycle sem a chamada quando nada está pendente.
+        ++vu.m_cycle;
+        vu.m_state.cycles = vu.m_cycle;
+        if (vu.m_cycle >= vu.m_nextReady)
+            vu.commitReadyPipelines();
+        if (vu.m_xgkick.active)
+            vu.progressXgkick();
         return programEnded ? Result::Ended : Result::Next;
     }
 };

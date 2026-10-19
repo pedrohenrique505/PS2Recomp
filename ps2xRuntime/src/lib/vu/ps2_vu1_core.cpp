@@ -152,7 +152,15 @@ void VU1Interpreter::resetScheduler()
     m_vfWritePipeline = {};
     m_viWritePipeline = {};
     m_accWritePipeline = {};
-    m_xgkick = {};
+    // O buffer de pacote (64 KiB) só é lido até copiedBytes; zerá-lo a cada chamada custava caro.
+    m_xgkick.sourceAddress = 0;
+    m_xgkick.totalBytes = 0;
+    m_xgkick.copiedBytes = 0;
+    m_xgkick.currentTagEnd = 0;
+    m_xgkick.cycleCredit = 0;
+    m_xgkick.issueCycle = 0;
+    m_xgkick.active = false;
+    m_xgkick.currentTagEop = false;
     m_vfReady = {};
     m_viReady = {};
     m_accReady = {};
@@ -727,10 +735,16 @@ void VU1Interpreter::progressXgkick()
         }
 
         const uint32_t qwordOffset = m_xgkick.copiedBytes;
-        for (uint32_t i = 0; i < 16u; ++i)
+        const uint32_t first = (m_xgkick.sourceAddress + m_xgkick.copiedBytes) % m_activeVuDataSize;
+        if (first + 16u <= m_activeVuDataSize)
+            std::memcpy(m_xgkick.packet.data() + m_xgkick.copiedBytes, m_activeVuData + first, 16u);
+        else
         {
-            const uint32_t source = (m_xgkick.sourceAddress + m_xgkick.copiedBytes + i) % m_activeVuDataSize;
-            m_xgkick.packet[m_xgkick.copiedBytes + i] = m_activeVuData[source];
+            for (uint32_t i = 0; i < 16u; ++i)
+            {
+                const uint32_t source = (m_xgkick.sourceAddress + m_xgkick.copiedBytes + i) % m_activeVuDataSize;
+                m_xgkick.packet[m_xgkick.copiedBytes + i] = m_activeVuData[source];
+            }
         }
         m_xgkick.copiedBytes += 16u;
 
