@@ -157,6 +157,18 @@ struct VUNativeAccess
     static inline bool exactFmac(const VU1Interpreter &vu, uint32_t upper,
                                  uint32_t component, long double &result)
     {
+        return exactFmacIn(vu, upper, component, result);
+    }
+
+    // A mesma fórmula em outra precisão. Em double o produto de dois floats é exato e a
+    // soma arredondada preserva sinal e zero; normalizeExactFast usa isso para classificar.
+    template <typename Real>
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((always_inline))
+#endif
+    static inline bool exactFmacIn(const VU1Interpreter &vu, uint32_t upper,
+                                   uint32_t component, Real &result)
+    {
         const uint8_t op = static_cast<uint8_t>(upper & 0x3Fu);
         const uint8_t special = op >= 0x3Cu
                                     ? static_cast<uint8_t>((upper & 3u) | ((upper >> 4) & 0x7Cu))
@@ -166,7 +178,7 @@ struct VUNativeAccess
 
         const auto operand = [](float value)
         {
-            return static_cast<long double>(normalizeVuOperand(value));
+            return static_cast<Real>(normalizeVuOperand(value));
         };
         const auto vs = [&](uint32_t lane)
         {
@@ -181,8 +193,8 @@ struct VUNativeAccess
             return operand(vu.m_state.acc[lane]);
         };
 
-        const long double q = operand(vu.m_state.q);
-        const long double i = operand(vu.m_state.i);
+        const Real q = operand(vu.m_state.q);
+        const Real i = operand(vu.m_state.i);
 
         if (op < 0x3Cu)
         {
@@ -250,7 +262,7 @@ struct VUNativeAccess
                     static constexpr uint8_t left[4] = {1u, 2u, 0u, 3u};
                     static constexpr uint8_t right[4] = {2u, 0u, 1u, 3u};
                     result = component == 3u
-                                 ? 0.0L
+                                 ? Real(0)
                                  : acc(component) - vs(left[component]) * vt(right[component]);
                     break;
                 }
@@ -325,7 +337,7 @@ struct VUNativeAccess
                 static constexpr uint8_t left[4] = {1u, 2u, 0u, 3u};
                 static constexpr uint8_t right[4] = {2u, 0u, 1u, 3u};
                 result = component == 3u
-                             ? 0.0L
+                             ? Real(0)
                              : vs(left[component]) * vt(right[component]);
                 break;
             }
@@ -339,6 +351,38 @@ struct VUNativeAccess
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((always_inline))
 #endif
+    // Mesmo resultado de normalizeExact a partir do valor calculado em double, ou false quando
+    // ele está perto de FLT_MAX/FLT_MIN e só o long double de referência decide.
+    static inline bool normalizeExactFast(float &value, double exactResult, uint8_t &flags)
+    {
+        const double magnitude = std::fabs(exactResult);
+        if (magnitude >= 0x1p127 || (magnitude != 0.0 && magnitude < 0x1p-125))
+            return false;
+        const bool negative = std::signbit(exactResult);
+        flags = negative ? 0x2u : 0u;
+        if (magnitude == 0.0)
+        {
+            flags |= 0x1u;
+            const uint32_t bits = negative ? 0x80000000u : 0u;
+            std::memcpy(&value, &bits, sizeof(value));
+        }
+        return true;
+    }
+
+    // Classificação completa de um resultado exato em double (produtos de floats são exatos).
+    static inline uint8_t exactFlags(double exactResult)
+    {
+        const double magnitude = std::fabs(exactResult);
+        uint8_t flags = std::signbit(exactResult) ? 0x2u : 0u;
+        if (magnitude == 0.0)
+            flags |= 0x1u;
+        else if (magnitude > static_cast<double>(std::numeric_limits<float>::max()))
+            flags |= 0x8u;
+        else if (magnitude < static_cast<double>(std::numeric_limits<float>::min()))
+            flags |= 0x5u;
+        return flags;
+    }
+
     static inline uint8_t normalizeExact(float &value, long double exactResult)
     {
         const bool negative = std::signbit(exactResult);
@@ -418,9 +462,8 @@ struct VUNativeAccess
                 right = normalizeVuOperand(vu.m_state.vf[ft][component]);
             }
 
-            float product = left * right;
-            const long double exactProduct = static_cast<long double>(left) * static_cast<long double>(right);
-            const uint8_t productFlags = normalizeExact(product, exactProduct);
+            // O produto de dois floats é exato em double.
+            const uint8_t productFlags = exactFlags(static_cast<double>(left) * static_cast<double>(right));
             // Product-sum instructions report Z/S/U/O from the add/subtract result
             // as current flags, while every product condition accumulates into the
             // corresponding sticky flag.
@@ -681,9 +724,16 @@ struct VUNativeAccess::NativeUpper
                 {
                     if ((dest & (1u << (3u - component))) == 0u)
                         continue;
+                    double fast = 0.0;
                     long double exact = 0.0L;
-                    if (VUNativeAccess::exactFmac(vu, Instr, component, exact))
-                        flags[component] = VUNativeAccess::normalizeExact(result[component], exact);
+                    if (VUNativeAccess::exactFmacIn(vu, Instr, component, fast))
+                    {
+                        if (!VUNativeAccess::normalizeExactFast(result[component], fast, flags[component]))
+                        {
+                            VUNativeAccess::exactFmac(vu, Instr, component, exact);
+                            flags[component] = VUNativeAccess::normalizeExact(result[component], exact);
+                        }
+                    }
                     else
                     {
                         uint32_t laneFlags = 0u;

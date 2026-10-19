@@ -269,9 +269,13 @@ void VU1Interpreter::normalizeFmacResult(float *result, uint8_t dest,
         if ((dest & laneForComponent(component)) == 0u)
             continue;
 
-        long double exactResult = 0.0L;
-        if (calculateFmacExactResult(component, exactResult))
+        double fastResult = 0.0;
+        if (VUNativeAccess::exactFmacIn(*this, m_currentUpperInstruction, component, fastResult))
         {
+            if (VUNativeAccess::normalizeExactFast(result[component], fastResult, laneFlags[component]))
+                continue;
+            long double exactResult = 0.0L;
+            calculateFmacExactResult(component, exactResult);
             laneFlags[component] = normalizeFmacExactResult(result[component], exactResult);
             continue;
         }
