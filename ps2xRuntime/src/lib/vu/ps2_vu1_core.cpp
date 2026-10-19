@@ -36,7 +36,7 @@ namespace
                   bool enabled) : state(s), data(d), dataSize(size)
         {
             static const char *directory = std::getenv("PS2X_VU1_CAPTURE");
-            static const uint64_t tick = []() { const char *v = std::getenv("PS2X_VU1_CAPTURE_VSYNC"); return v ? std::strtoull(v, nullptr, 0) : 370ull; }();
+            static const uint64_t tick = []() { const char *v = std::getenv("PS2X_VU1_CAPTURE_VSYNC"); return v ? std::strtoull(v, nullptr, 0) : 500ull; }();
             static uint32_t sequence = 0;
             static const bool captureVu0 = std::getenv("PS2X_VU0_CAPTURE") != nullptr;
             if ((enabled == captureVu0) || !directory || !memory || memory->gs().vsyncTick.load(std::memory_order_acquire) != tick)
