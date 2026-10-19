@@ -40,6 +40,17 @@ struct VUNativeAccess
 
     template <uint32_t Instr> struct NativeUpper;
 
+    static inline uint64_t currentCycle(const VU1Interpreter &vu) { return vu.m_cycle; }
+    static constexpr uint32_t accForwardLatency() { return VU1Interpreter::kAccForwardLatency; }
+
+    // Guardas de entrada: somente dependências ainda não produzidas pelo bloco.
+    static inline bool vfReadyBy(const VU1Interpreter &vu, uint32_t reg, uint32_t lane, uint64_t cycle)
+    { return vu.m_vfReady[reg][lane] <= cycle; }
+    static inline bool viReadyBy(const VU1Interpreter &vu, uint32_t reg, uint64_t cycle)
+    { return vu.m_viReady[reg] <= cycle; }
+    static inline bool accReadyBy(const VU1Interpreter &vu, uint32_t lane, uint64_t cycle)
+    { return vu.m_accReady[lane] <= cycle; }
+
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((always_inline))
 #endif
@@ -424,7 +435,8 @@ struct VUNativeAccess
 #endif
     static inline Result issue(VU1Interpreter &vu, const Pair &decoded, uint32_t codeSize,
                         uint8_t *vuData, uint32_t dataSize, GS &gs,
-                        PS2Memory *memory, uint64_t budgetEnd)
+                        PS2Memory *memory, uint64_t budgetEnd,
+                        uint64_t scheduledReady = UINT64_MAX)
     {
         if (vu.m_cycle >= budgetEnd || vu.m_stopRequested || vu.m_state.pc + 8u > codeSize)
             return Result::Stopped;
@@ -436,7 +448,9 @@ struct VUNativeAccess
             return Result::Stopped;
         }
 
-        uint64_t readyCycle = pairReady(vu, decoded);
+        // O calendário AOT só vale após as guardas de entrada e até o próximo
+        // desvio. As filas continuam materializadas em cada fronteira de ciclo.
+        uint64_t readyCycle = scheduledReady != UINT64_MAX ? scheduledReady : pairReady(vu, decoded);
         while (readyCycle > vu.m_cycle)
         {
             if (readyCycle >= budgetEnd)
@@ -445,6 +459,8 @@ struct VUNativeAccess
                 break;
             }
             vu.advanceTo(readyCycle);
+            if (scheduledReady != UINT64_MAX)
+                break;
             readyCycle = pairReady(vu, decoded);
         }
         if (vu.m_cycle >= budgetEnd)
