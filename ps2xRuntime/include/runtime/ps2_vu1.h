@@ -63,6 +63,8 @@ public:
     const VU1State &state() const { return m_state; }
 
 private:
+    friend struct VUNativeAccess;
+
     enum Pipeline : uint8_t
     {
         PipelineNone = 0,
@@ -289,8 +291,6 @@ private:
     void flushPipelines();
     void progressXgkick();
     void finishXgkick();
-    uint64_t calculatePairReadyCycle(const DecodedInstructionPair &decoded) const;
-    void markPairWrites(const DecodedInstructionPair &decoded);
     bool pipelinesPending() const;
     // Menor readyCycle entre as entradas pendentes (conservador: nunca maior que o real).
     uint64_t m_nextReady = 0;

@@ -462,6 +462,18 @@ else()
     )
 endif()
 
+# Fontes AOT são gerados localmente; nenhum microprograma acompanha o runtime.
+set(PS2X_VU_NATIVE_DIR "" CACHE PATH "Directory containing generated native VU C++ programs")
+if(PS2X_VU_NATIVE_DIR)
+    file(GLOB VU_NATIVE_SRC_FILES CONFIGURE_DEPENDS "${PS2X_VU_NATIVE_DIR}/*.cpp")
+    if(NOT VU_NATIVE_SRC_FILES)
+        message(FATAL_ERROR "PS2X_VU_NATIVE_DIR contains no generated C++ sources")
+    endif()
+    target_sources(ps2EntryRunner PRIVATE ${VU_NATIVE_SRC_FILES})
+    target_include_directories(ps2EntryRunner PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/lib/vu")
+    set_source_files_properties(${VU_NATIVE_SRC_FILES} PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
+endif()
+
 if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
     set_target_properties(ps2EntryRunner PROPERTIES
         UNITY_BUILD ON
