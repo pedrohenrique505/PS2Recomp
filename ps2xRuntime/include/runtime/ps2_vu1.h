@@ -228,6 +228,11 @@ private:
     uint32_t m_cachedCodeSize = 0;
     uint64_t m_cachedCodeGeneration = 0;
     bool m_decodedCodeCacheValid = false;
+    // Imagem de código resolvida para (memória, geração): a entrada de execute/resume
+    // só faz hash e comparação quando a geração do código da unidade mudou.
+    const PS2Memory *m_codeImageMemory = nullptr;
+    uint64_t m_codeImageGeneration = 0;
+    uint32_t m_codeImage = 0;
 
     std::array<FlagPipelineEntry, kMaxFlagEntries> m_flagPipeline{};
     ScalarPipelineEntry m_fdiv{};
@@ -282,6 +287,7 @@ private:
     DecodedInstructionPair decodeInstructionPair(const uint8_t *vuCode, uint32_t pc) const;
     DecodedInstructionPair getDecodedInstructionPairForPc(const uint8_t *vuCode, uint32_t codeSize, PS2Memory *memory, uint32_t pc);
     void rebuildDecodedCodeCache(const uint8_t *vuCode, uint32_t codeSize, const PS2Memory *memory, uint64_t generation);
+    uint32_t resolveCodeImage(const uint8_t *vuCode, uint32_t codeSize, const PS2Memory *memory);
 
     void execUpper(uint32_t instr);
     void execLower(uint32_t instr, uint8_t *vuData, uint32_t dataSize, GS &gs, PS2Memory *memory, uint32_t upperInstr);

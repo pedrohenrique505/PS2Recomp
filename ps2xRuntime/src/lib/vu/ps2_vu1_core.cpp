@@ -15,6 +15,7 @@
 #include <cstring>
 #include <filesystem>
 #include <limits>
+#include <vector>
 #include <ps2_log.h>
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -60,31 +61,67 @@ namespace
         }
     };
 
-    VUNativeRunner findVuNativeRunner(const uint8_t *code, uint32_t codeSize, VU1Interpreter::Unit unit)
+    struct VuNativeRegistry
     {
+        const VUNativeProgram *programs = nullptr;
+        size_t count = 0;
+        std::vector<uint64_t> hashes;
+    };
+
+    const VuNativeRegistry &vuNativeRegistry()
+    {
+        static const VuNativeRegistry registry = [] {
+            VuNativeRegistry result;
 #if defined(__GNUC__) || defined(__clang__)
-        static const bool enabled = [] {
             const char *value = std::getenv("PS2X_VU_NATIVE");
-            return !value || std::strcmp(value, "0") != 0;
-        }();
-        if (enabled && ps2xVuNativePrograms)
-        {
-            size_t count = 0;
-            const auto *programs = ps2xVuNativePrograms(&count);
-            for (size_t i = 0; i < count; ++i)
-                if (programs[i].unit == unit && programs[i].codeSize == codeSize &&
-                    std::memcmp(programs[i].code, code, codeSize) == 0)
-                {
-                    static const bool announced = [codeSize] {
-                        std::fprintf(stderr, "[vu-native] blocos AOT selecionados (%u bytes)\n", codeSize);
-                        return true;
-                    }();
-                    (void)announced;
-                    return programs[i].run;
-                }
-        }
+            if ((!value || std::strcmp(value, "0") != 0) && ps2xVuNativePrograms)
+                result.programs = ps2xVuNativePrograms(&result.count);
 #endif
-        return nullptr;
+            for (size_t i = 0; i < result.count; ++i)
+                result.hashes.push_back(vuCodeImageHash(result.programs[i].code, result.programs[i].codeSize));
+            return result;
+        }();
+        return registry;
+    }
+
+    // Código da unidade rastreado pela memória: devolve a geração, que muda a cada escrita
+    // (MPG ou EE). O tamanho vem da unidade.
+    bool trackedCodeGeneration(VU1Interpreter::Unit unit, const uint8_t *code, uint32_t codeSize,
+                               const PS2Memory *memory, uint64_t &generation)
+    {
+        const bool vu1 = unit == VU1Interpreter::Unit::VU1;
+        if (memory == nullptr || code != (vu1 ? memory->getVU1Code() : memory->getVU0Code()) ||
+            codeSize != (vu1 ? PS2_VU1_CODE_SIZE : PS2_VU0_CODE_SIZE))
+            return false;
+        generation = vu1 ? memory->getVU1CodeGeneration() : memory->getVU0CodeGeneration();
+        return true;
+    }
+
+    // PS2X_PROF: quantas vezes a imagem foi resolvida (hash + comparação).
+    uint64_t g_codeImageResolutions = 0;
+
+    uint32_t findVuCodeImage(const uint8_t *code, uint32_t codeSize, VU1Interpreter::Unit unit)
+    {
+        const VuNativeRegistry &registry = vuNativeRegistry();
+        if (registry.count == 0)
+            return kNoVuCodeImage;
+        ++g_codeImageResolutions;
+        const uint64_t hash = vuCodeImageHash(code, codeSize);
+        for (size_t i = 0; i < registry.count; ++i)
+        {
+            const VUNativeProgram &program = registry.programs[i];
+            if (registry.hashes[i] == hash && program.unit == unit && program.codeSize == codeSize &&
+                std::memcmp(program.code, code, codeSize) == 0)
+            {
+                static const bool announced = [codeSize] {
+                    std::fprintf(stderr, "[vu-native] blocos AOT selecionados (%u bytes)\n", codeSize);
+                    return true;
+                }();
+                (void)announced;
+                return static_cast<uint32_t>(i);
+            }
+        }
+        return kNoVuCodeImage;
     }
 
     constexpr uint8_t laneForComponent(uint32_t component)
@@ -1334,13 +1371,10 @@ VU1Interpreter::DecodedInstructionPair VU1Interpreter::getDecodedInstructionPair
     if ((pc & 7u) != 0u)
         return decodeInstructionPair(vuCode, pc);
 
-    const bool trackedVu1Code = memory != nullptr &&
-                                ((m_unit == Unit::VU1 && vuCode == memory->getVU1Code()) ||
-                                 (m_unit == Unit::VU0 && vuCode == memory->getVU0Code()));
-    if (!trackedVu1Code)
+    uint64_t generation = 0;
+    if (!trackedCodeGeneration(m_unit, vuCode, codeSize, memory, generation))
         return decodeInstructionPair(vuCode, pc);
 
-    const uint64_t generation = m_unit == Unit::VU1 ? memory->getVU1CodeGeneration() : memory->getVU0CodeGeneration();
     if (!m_decodedCodeCacheValid ||
         m_cachedVuCode != vuCode ||
         m_cachedMemory != memory ||
@@ -1353,6 +1387,21 @@ VU1Interpreter::DecodedInstructionPair VU1Interpreter::getDecodedInstructionPair
     if (pairIndex >= kMaxDecodedPairs)
         return decodeInstructionPair(vuCode, pc);
     return m_decodedCodeCache[pairIndex];
+}
+
+uint32_t VU1Interpreter::resolveCodeImage(const uint8_t *vuCode, uint32_t codeSize, const PS2Memory *memory)
+{
+    // Sem memória rastreada não há geração em que confiar: resolve a cada chamada.
+    uint64_t generation = 0;
+    if (!trackedCodeGeneration(m_unit, vuCode, codeSize, memory, generation))
+        return findVuCodeImage(vuCode, codeSize, m_unit);
+    if (m_codeImageMemory != memory || m_codeImageGeneration != generation)
+    {
+        m_codeImage = findVuCodeImage(vuCode, codeSize, m_unit);
+        m_codeImageMemory = memory;
+        m_codeImageGeneration = generation;
+    }
+    return m_codeImage;
 }
 
 void VU1Interpreter::reportReservedInstruction(bool upper, uint32_t instruction)
@@ -1421,7 +1470,10 @@ void VU1Interpreter::run(uint8_t *vuCode, uint32_t codeSize,
     const bool useVuRounding = std::fesetround(FE_TOWARDZERO) == 0;
     const uint64_t budgetEnd = m_cycle + maxCycles;
     bool programEnded = false;
-    VUNativeRunner native = (m_state.pc & 7u) == 0u ? findVuNativeRunner(vuCode, codeSize, m_unit) : nullptr;
+    const uint32_t image = resolveCodeImage(vuCode, codeSize, memory);
+    VUNativeRunner native = image != kNoVuCodeImage && (m_state.pc & 7u) == 0u
+                                ? vuNativeRegistry().programs[image].run
+                                : nullptr;
     if (native)
         programEnded = native(*this, codeSize, vuData, dataSize, gs, memory, budgetEnd);
     else
@@ -1469,9 +1521,10 @@ void VU1Interpreter::run(uint8_t *vuCode, uint32_t codeSize,
         else
             ++other;
         if ((ended + budget + other) % 20000u == 0u)
-            std::fprintf(stderr, "[vu1] execuções: fim normal=%llu estouro=%llu outro=%llu nativas=%llu\n",
+            std::fprintf(stderr, "[vu1] execuções: fim normal=%llu estouro=%llu outro=%llu nativas=%llu resoluções de imagem=%llu\n",
                          static_cast<unsigned long long>(ended), static_cast<unsigned long long>(budget),
-                         static_cast<unsigned long long>(other), static_cast<unsigned long long>(nativeRuns));
+                         static_cast<unsigned long long>(other), static_cast<unsigned long long>(nativeRuns),
+                         static_cast<unsigned long long>(g_codeImageResolutions));
     }
     m_state.cycles = m_cycle;
     if (useVuRounding && previousRoundingMode != -1)

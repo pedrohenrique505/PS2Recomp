@@ -20,6 +20,23 @@ struct VUNativeProgram
     VUNativeRunner run;
 };
 
+// Id de uma imagem de código: índice no registro AOT, ou nenhum.
+constexpr uint32_t kNoVuCodeImage = UINT32_MAX;
+
+// Hash de 64 bits do conteúdo de uma imagem de código (tamanho múltiplo de 8). Só escolhe
+// o candidato; a seleção confirma com comparação de bytes.
+inline uint64_t vuCodeImageHash(const uint8_t *code, uint32_t size)
+{
+    uint64_t hash = 0x9e3779b97f4a7c15ull ^ size;
+    for (uint32_t offset = 0; offset + 8u <= size; offset += 8u)
+    {
+        uint64_t word;
+        std::memcpy(&word, code + offset, sizeof(word));
+        hash = std::rotl(hash ^ (word * 0x87c37b91114253d5ull), 31) * 0x4cf5ad432745937full;
+    }
+    return hash ^ (hash >> 29);
+}
+
 struct VUNativeAccess
 {
     using Pair = VU1Interpreter::DecodedInstructionPair;
