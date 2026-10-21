@@ -190,44 +190,6 @@ void VU1Interpreter::reset()
     resetScheduler();
 }
 
-float VU1Interpreter::broadcast(const float *vf, uint8_t bc)
-{
-    return normalizeOperand(vf[bc & 3u]);
-}
-
-float VU1Interpreter::normalizeOperand(float value) const
-{
-    return normalizeVuOperand(value);
-}
-
-float VU1Interpreter::normalizeResult(float value, uint32_t &laneFlags) const
-{
-    uint32_t bits = 0;
-    std::memcpy(&bits, &value, sizeof(bits));
-    const uint32_t sign = bits & 0x80000000u;
-    const uint32_t magnitude = bits & 0x7FFFFFFFu;
-    const uint32_t exponent = (bits >> 23) & 0xFFu;
-
-    laneFlags = sign != 0u ? 0x2u : 0u;
-    if (magnitude == 0u)
-    {
-        laneFlags |= 0x1u;
-    }
-    else if (exponent == 0u)
-    {
-        laneFlags |= 0x5u;
-        bits = sign;
-    }
-    else if (exponent == 0xFFu)
-    {
-        laneFlags |= 0x8u;
-        bits = sign | 0x7F7FFFFFu;
-    }
-
-    std::memcpy(&value, &bits, sizeof(value));
-    return value;
-}
-
 uint32_t VU1Interpreter::microAddressMask() const
 {
     return m_unit == Unit::VU1 ? 0x3FFFu : 0x0FFFu;
@@ -271,47 +233,6 @@ void VU1Interpreter::applyDestAcc(const float *result, uint8_t dest)
     applyDest(m_state.acc, result, dest);
 }
 
-void VU1Interpreter::normalizeFmacResult(float *result, uint8_t dest,
-                                         uint8_t laneFlags[4])
-{
-    for (uint32_t component = 0; component < 4u; ++component)
-    {
-        laneFlags[component] = 0u;
-        if ((dest & laneForComponent(component)) == 0u)
-            continue;
-
-        double fastResult = 0.0;
-        if (VUNativeAccess::exactFmacIn(*this, m_currentUpperInstruction, component, fastResult))
-        {
-            if (VUNativeAccess::normalizeExactFast(result[component], fastResult, laneFlags[component]))
-                continue;
-            long double exactResult = 0.0L;
-            calculateFmacExactResult(component, exactResult);
-            laneFlags[component] = normalizeFmacExactResult(result[component], exactResult);
-            continue;
-        }
-
-        uint32_t flags = 0u;
-        result[component] = normalizeResult(result[component], flags);
-        laneFlags[component] = static_cast<uint8_t>(flags);
-    }
-}
-
-bool VU1Interpreter::calculateFmacExactResult(uint32_t component, long double &result) const
-{
-    return VUNativeAccess::exactFmac(*this, m_currentUpperInstruction, component, result);
-}
-
-uint8_t VU1Interpreter::normalizeFmacExactResult(float &value, long double exactResult) const
-{
-    return VUNativeAccess::normalizeExact(value, exactResult);
-}
-
-uint32_t VU1Interpreter::calculateFmacProductSticky(uint8_t dest) const
-{
-    return VUNativeAccess::productSticky(*this, m_currentUpperInstruction, dest);
-}
-
 void VU1Interpreter::updateFmacFlags(const uint8_t laneFlags[4], uint8_t dest,
                                      uint32_t extraSticky)
 {
@@ -353,22 +274,6 @@ void VU1Interpreter::updateFmacFlags(const uint8_t laneFlags[4], uint8_t dest,
     entry->extraSticky = extraSticky;
     entry->writesMac = true;
     entry->writesStatus = true;
-}
-
-void VU1Interpreter::applyFmacDest(float *dst, float *result, uint8_t dest)
-{
-    uint8_t laneFlags[4]{};
-    normalizeFmacResult(result, dest, laneFlags);
-    updateFmacFlags(laneFlags, dest, calculateFmacProductSticky(dest));
-    applyDest(dst, result, dest);
-}
-
-void VU1Interpreter::applyFmacDestAcc(float *result, uint8_t dest)
-{
-    uint8_t laneFlags[4]{};
-    normalizeFmacResult(result, dest, laneFlags);
-    updateFmacFlags(laneFlags, dest, calculateFmacProductSticky(dest));
-    applyDestAcc(result, dest);
 }
 
 VU1Interpreter::FlagPipelineEntry *VU1Interpreter::allocateFlagEntry()
@@ -442,8 +347,6 @@ void VU1Interpreter::queueFcset(uint32_t clip)
 
 void VU1Interpreter::queueQ(float value, uint32_t latency, uint32_t statusDi)
 {
-    uint32_t ignoredFlags = 0u;
-    value = normalizeResult(value, ignoredFlags);
     m_fdiv.valid = true;
     m_fdiv.readyCycle = m_cycle + latency;
     noteReady(m_fdiv.readyCycle);
@@ -453,8 +356,6 @@ void VU1Interpreter::queueQ(float value, uint32_t latency, uint32_t statusDi)
 
 void VU1Interpreter::queueP(float value, uint32_t latency)
 {
-    uint32_t ignoredFlags = 0u;
-    value = normalizeResult(value, ignoredFlags);
     for (ScalarPipelineEntry &entry : m_efu)
     {
         if (!entry.valid)

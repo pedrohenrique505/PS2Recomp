@@ -259,7 +259,6 @@ private:
     uint64_t m_nextWriteSequence = 0;
     uint64_t m_efuResourceReady = 0;
     uint32_t m_workingClip = 0;
-    uint32_t m_currentUpperInstruction = 0;
     int32_t m_viBranchBackupValue = 0;
     uint8_t m_viBranchBackupReg = 0;
     bool m_viBranchBackupValid = false;
@@ -289,17 +288,12 @@ private:
 
     void applyDest(float *dst, const float *result, uint8_t dest);
     void applyDestAcc(const float *result, uint8_t dest);
-    void applyFmacDest(float *dst, float *result, uint8_t dest);
-    void applyFmacDestAcc(float *result, uint8_t dest);
-    void normalizeFmacResult(float *result, uint8_t dest, uint8_t laneFlags[4]);
-    bool calculateFmacExactResult(uint32_t component, long double &result) const;
-    uint8_t normalizeFmacExactResult(float &value, long double exactResult) const;
-    uint32_t calculateFmacProductSticky(uint8_t dest) const;
     void updateFmacFlags(const uint8_t laneFlags[4], uint8_t dest, uint32_t extraSticky);
     FlagPipelineEntry *allocateFlagEntry();
     void queueFsset(uint16_t immediate);
     void queueClip(uint32_t clip);
     void queueFcset(uint32_t clip);
+    // Q e P chegam já normalizados pelos kernels de op.
     void queueQ(float value, uint32_t latency, uint32_t statusDi);
     void queueP(float value, uint32_t latency);
     void queueStore(uint32_t address, const uint32_t words[4], uint8_t laneMask);
@@ -324,13 +318,10 @@ private:
     uint64_t m_nextReady = 0;
     void noteReady(uint64_t c) { if (c < m_nextReady) m_nextReady = c; }
 
-    float normalizeOperand(float value) const;
-    float normalizeResult(float value, uint32_t &laneFlags) const;
     uint32_t microAddressMask() const;
     int32_t readBranchVi(uint8_t reg) const;
     void recordViWriteForBranch(uint8_t reg, int32_t oldValue);
     void reportReservedInstruction(bool upper, uint32_t instruction);
-    float broadcast(const float *vf, uint8_t bc);
 };
 
 #endif

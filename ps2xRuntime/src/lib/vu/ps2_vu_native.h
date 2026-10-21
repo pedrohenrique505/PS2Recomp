@@ -3,12 +3,11 @@
 
 #include "runtime/ps2_vu1.h"
 #include "ps2_vu1_detail.h"
+#include "ps2_vu_kernels.h"
 #include <algorithm>
 #include <bit>
 #include <cstring>
 #include <cmath>
-#include <limits>
-#include <type_traits>
 
 // Interface interna dos blocos AOT. Código gerado continua fora do runtime versionado.
 using VUNativeRunner = bool (*)(VU1Interpreter &, uint32_t, uint8_t *, uint32_t,
@@ -152,339 +151,6 @@ struct VUNativeAccess
         }
     }
 
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((always_inline))
-#endif
-    static inline bool exactFmac(const VU1Interpreter &vu, uint32_t upper,
-                                 uint32_t component, long double &result)
-    {
-        return exactFmacIn(vu, upper, component, result);
-    }
-
-    // left * right + addend com um só arredondamento. Com operandos float o produto é exato em
-    // double e long double, então fundir não muda o valor; o x87 não tem FMA e std::fma em
-    // long double viraria uma chamada a fmal.
-    template <typename Real>
-    static inline Real vuMultiplyAdd(Real left, Real right, Real addend)
-    {
-        if constexpr (std::is_same_v<Real, long double>)
-            return addend + left * right;
-        else
-            return std::fma(left, right, addend);
-    }
-
-    // A mesma fórmula em outra precisão. Em double o produto de dois floats é exato e a
-    // soma arredondada preserva sinal e zero; normalizeExactFast usa isso para classificar.
-    template <typename Real>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((always_inline))
-#endif
-    static inline bool exactFmacIn(const VU1Interpreter &vu, uint32_t upper,
-                                   uint32_t component, Real &result)
-    {
-        const uint8_t op = static_cast<uint8_t>(upper & 0x3Fu);
-        const uint8_t special = op >= 0x3Cu
-                                    ? static_cast<uint8_t>((upper & 3u) | ((upper >> 4) & 0x7Cu))
-                                    : 0xFFu;
-        const uint8_t fs = FS(upper);
-        const uint8_t ft = FT(upper);
-
-        const auto operand = [](float value)
-        {
-            return static_cast<Real>(normalizeVuOperand(value));
-        };
-        const auto vs = [&](uint32_t lane)
-        {
-            return operand(vu.m_state.vf[fs][lane]);
-        };
-        const auto vt = [&](uint32_t lane)
-        {
-            return operand(vu.m_state.vf[ft][lane]);
-        };
-        const auto acc = [&](uint32_t lane)
-        {
-            return operand(vu.m_state.acc[lane]);
-        };
-
-        const Real q = operand(vu.m_state.q);
-        const Real i = operand(vu.m_state.i);
-
-        if (op < 0x3Cu)
-        {
-            if (op <= 0x03u)
-                result = vs(component) + vt(op & 3u);
-            else if (op <= 0x07u)
-                result = vs(component) - vt(op & 3u);
-            else if (op <= 0x0Bu)
-                result = vuMultiplyAdd(vs(component), vt(op & 3u), acc(component));
-            else if (op <= 0x0Fu)
-                result = vuMultiplyAdd(-vs(component), vt(op & 3u), acc(component));
-            else if (op >= 0x18u && op <= 0x1Bu)
-                result = vs(component) * vt(op & 3u);
-            else
-            {
-                switch (op)
-                {
-                case 0x1Cu:
-                    result = vs(component) * q;
-                    break;
-                case 0x1Eu:
-                    result = vs(component) * i;
-                    break;
-                case 0x20u:
-                    result = vs(component) + q;
-                    break;
-                case 0x21u:
-                    result = vuMultiplyAdd(vs(component), q, acc(component));
-                    break;
-                case 0x22u:
-                    result = vs(component) + i;
-                    break;
-                case 0x23u:
-                    result = vuMultiplyAdd(vs(component), i, acc(component));
-                    break;
-                case 0x24u:
-                    result = vs(component) - q;
-                    break;
-                case 0x25u:
-                    result = vuMultiplyAdd(-vs(component), q, acc(component));
-                    break;
-                case 0x26u:
-                    result = vs(component) - i;
-                    break;
-                case 0x27u:
-                    result = vuMultiplyAdd(-vs(component), i, acc(component));
-                    break;
-                case 0x28u:
-                    result = vs(component) + vt(component);
-                    break;
-                case 0x29u:
-                    result = vuMultiplyAdd(vs(component), vt(component), acc(component));
-                    break;
-                case 0x2Au:
-                    result = vs(component) * vt(component);
-                    break;
-                case 0x2Cu:
-                    result = vs(component) - vt(component);
-                    break;
-                case 0x2Du:
-                    result = vuMultiplyAdd(-vs(component), vt(component), acc(component));
-                    break;
-                case 0x2Eu:
-                {
-                    static constexpr uint8_t left[4] = {1u, 2u, 0u, 3u};
-                    static constexpr uint8_t right[4] = {2u, 0u, 1u, 3u};
-                    result = component == 3u
-                                 ? Real(0)
-                                 : vuMultiplyAdd(-vs(left[component]), vt(right[component]), acc(component));
-                    break;
-                }
-                default:
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        if (special <= 0x03u)
-            result = vs(component) + vt(special & 3u);
-        else if (special <= 0x07u)
-            result = vs(component) - vt(special & 3u);
-        else if (special <= 0x0Bu)
-            result = vuMultiplyAdd(vs(component), vt(special & 3u), acc(component));
-        else if (special <= 0x0Fu)
-            result = vuMultiplyAdd(-vs(component), vt(special & 3u), acc(component));
-        else if (special >= 0x18u && special <= 0x1Bu)
-            result = vs(component) * vt(special & 3u);
-        else
-        {
-            switch (special)
-            {
-            case 0x1Cu:
-                result = vs(component) * q;
-                break;
-            case 0x1Eu:
-                result = vs(component) * i;
-                break;
-            case 0x20u:
-                result = vs(component) + q;
-                break;
-            case 0x21u:
-                result = vuMultiplyAdd(vs(component), q, acc(component));
-                break;
-            case 0x22u:
-                result = vs(component) + i;
-                break;
-            case 0x23u:
-                result = vuMultiplyAdd(vs(component), i, acc(component));
-                break;
-            case 0x24u:
-                result = vs(component) - q;
-                break;
-            case 0x25u:
-                result = vuMultiplyAdd(-vs(component), q, acc(component));
-                break;
-            case 0x26u:
-                result = vs(component) - i;
-                break;
-            case 0x27u:
-                result = vuMultiplyAdd(-vs(component), i, acc(component));
-                break;
-            case 0x28u:
-                result = vs(component) + vt(component);
-                break;
-            case 0x29u:
-                result = vuMultiplyAdd(vs(component), vt(component), acc(component));
-                break;
-            case 0x2Au:
-                result = vs(component) * vt(component);
-                break;
-            case 0x2Cu:
-                result = vs(component) - vt(component);
-                break;
-            case 0x2Du:
-                result = vuMultiplyAdd(-vs(component), vt(component), acc(component));
-                break;
-            case 0x2Eu:
-            {
-                static constexpr uint8_t left[4] = {1u, 2u, 0u, 3u};
-                static constexpr uint8_t right[4] = {2u, 0u, 1u, 3u};
-                result = component == 3u
-                             ? Real(0)
-                             : vs(left[component]) * vt(right[component]);
-                break;
-            }
-            default:
-                return false;
-            }
-        }
-        return true;
-    }
-
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((always_inline))
-#endif
-    // Mesmo resultado de normalizeExact a partir do valor calculado em double, ou false quando
-    // ele está perto de FLT_MAX/FLT_MIN e só o long double de referência decide.
-    static inline bool normalizeExactFast(float &value, double exactResult, uint8_t &flags)
-    {
-        const double magnitude = std::fabs(exactResult);
-        if (magnitude >= 0x1p127 || (magnitude != 0.0 && magnitude < 0x1p-125))
-            return false;
-        const bool negative = std::signbit(exactResult);
-        flags = negative ? 0x2u : 0u;
-        if (magnitude == 0.0)
-        {
-            flags |= 0x1u;
-            const uint32_t bits = negative ? 0x80000000u : 0u;
-            std::memcpy(&value, &bits, sizeof(value));
-        }
-        return true;
-    }
-
-    // Classificação completa de um resultado exato em double (produtos de floats são exatos).
-    static inline uint8_t exactFlags(double exactResult)
-    {
-        const double magnitude = std::fabs(exactResult);
-        uint8_t flags = std::signbit(exactResult) ? 0x2u : 0u;
-        if (magnitude == 0.0)
-            flags |= 0x1u;
-        else if (magnitude > static_cast<double>(std::numeric_limits<float>::max()))
-            flags |= 0x8u;
-        else if (magnitude < static_cast<double>(std::numeric_limits<float>::min()))
-            flags |= 0x5u;
-        return flags;
-    }
-
-    static inline uint8_t normalizeExact(float &value, long double exactResult)
-    {
-        const bool negative = std::signbit(exactResult);
-        const long double magnitude = std::fabs(exactResult);
-        const long double maximum = static_cast<long double>(std::numeric_limits<float>::max());
-        const long double minimum = static_cast<long double>(std::numeric_limits<float>::min());
-        uint8_t flags = negative ? 0x2u : 0u;
-
-        uint32_t bits = negative ? 0x80000000u : 0u;
-        if (magnitude == 0.0L)
-        {
-            flags |= 0x1u;
-            std::memcpy(&value, &bits, sizeof(value));
-        }
-        else if (magnitude > maximum)
-        {
-            flags |= 0x8u;
-            bits |= 0x7F7FFFFFu;
-            std::memcpy(&value, &bits, sizeof(value));
-        }
-        else if (magnitude < minimum)
-        {
-            flags |= 0x5u;
-            std::memcpy(&value, &bits, sizeof(value));
-        }
-
-        return flags;
-    }
-
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((always_inline))
-#endif
-    static inline uint32_t productSticky(const VU1Interpreter &vu, uint32_t upper, uint8_t dest)
-    {
-        uint32_t extraSticky = 0u;
-        const uint8_t op = static_cast<uint8_t>(upper & 0x3Fu);
-        const uint8_t special = op >= 0x3Cu ? static_cast<uint8_t>((upper & 3u) | ((upper >> 4) & 0x7Cu)) : 0xFFu;
-        const bool productSum =
-            (op >= 0x08u && op <= 0x0Fu) ||
-            op == 0x21u || op == 0x23u || op == 0x25u || op == 0x27u ||
-            op == 0x29u || op == 0x2Du || op == 0x2Eu ||
-            (special >= 0x08u && special <= 0x0Fu) ||
-            special == 0x21u || special == 0x23u || special == 0x25u ||
-            special == 0x27u || special == 0x29u || special == 0x2Du;
-        if (!productSum)
-            return 0u;
-
-        const uint8_t fs = FS(upper);
-        const uint8_t ft = FT(upper);
-        for (uint32_t component = 0; component < 4u; ++component)
-        {
-            if ((dest & (1u << (3u - component))) == 0u)
-                continue;
-            static constexpr uint8_t crossLeft[4] = {1u, 2u, 0u, 3u};
-            static constexpr uint8_t crossRight[4] = {2u, 0u, 1u, 3u};
-            const uint8_t leftComponent = op == 0x2Eu ? crossLeft[component] : static_cast<uint8_t>(component);
-            const float left = normalizeVuOperand(vu.m_state.vf[fs][leftComponent]);
-            float right = 0.0f;
-            if ((op >= 0x08u && op <= 0x0Fu) || (special >= 0x08u && special <= 0x0Fu))
-            {
-                right = normalizeVuOperand(vu.m_state.vf[ft][(op >= 0x08u && op <= 0x0Fu ? op : special) & 3u]);
-            }
-            else if (op == 0x21u || op == 0x25u || special == 0x21u || special == 0x25u)
-            {
-                right = normalizeVuOperand(vu.m_state.q);
-            }
-            else if (op == 0x23u || op == 0x27u || special == 0x23u || special == 0x27u)
-            {
-                right = normalizeVuOperand(vu.m_state.i);
-            }
-            else if (op == 0x2Eu)
-            {
-                right = normalizeVuOperand(vu.m_state.vf[ft][crossRight[component]]);
-            }
-            else
-            {
-                right = normalizeVuOperand(vu.m_state.vf[ft][component]);
-            }
-
-            // O produto de dois floats é exato em double.
-            const uint8_t productFlags = exactFlags(static_cast<double>(left) * static_cast<double>(right));
-            // Product-sum instructions report Z/S/U/O from the add/subtract result
-            // as current flags, while every product condition accumulates into the
-            // corresponding sticky flag.
-            extraSticky |= productFlags & 0xFu;
-        }
-        return extraSticky;
-    }
-
     template <typename Upper>
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((always_inline))
@@ -551,7 +217,7 @@ struct VUNativeAccess
             Upper::run(vu, decoded.upper);
             float immediate = 0.0f;
             std::memcpy(&immediate, &decoded.lower, sizeof(immediate));
-            vu.m_state.i = vu.normalizeOperand(immediate);
+            vu.m_state.i = normalizeVuOperand(immediate);
         }
         else if (decoded.upperVfShadowReg != 0u)
         {
@@ -677,8 +343,8 @@ struct VUNativeAccess
     }
 };
 
-// O compilador C++ resolve opcode, registradores e máscaras nos programas AOT.
-// Operações ainda não especializadas usam a implementação de referência.
+// O compilador C++ resolve opcode, registradores e máscaras nos programas AOT; os valores e
+// flags vêm dos kernels de op. Operações ainda não especializadas usam execUpper.
 template <uint32_t Instr>
 struct VUNativeAccess::NativeUpper
 {
@@ -698,62 +364,46 @@ struct VUNativeAccess::NativeUpper
         constexpr bool mul = (sel >= 0x18u && sel <= 0x1cu) || sel == 0x1eu || sel == 0x2au;
         constexpr bool max = !toAcc && ((sel >= 0x10u && sel <= 0x13u) || sel == 0x1du || sel == 0x2bu);
         constexpr bool min = !toAcc && ((sel >= 0x14u && sel <= 0x17u) || sel == 0x1fu || sel == 0x2fu);
-        vu.m_currentUpperInstruction = Instr;
         if constexpr (toAcc && (sel == 0x2fu || sel == 0x30u))
             return;
         else if constexpr (add || sub || madd || msub || mul || max || min)
         {
-            float result[4];
+            float left[4];
+            float right[4];
+            float addend[4]{};
             for (uint32_t c = 0; c < 4u; ++c)
             {
-                const float left = normalizeVuOperand(vu.m_state.vf[fs][c]);
-                float right;
+                left[c] = normalizeVuOperand(vu.m_state.vf[fs][c]);
                 if constexpr (sel <= 0x1bu)
-                    right = normalizeVuOperand(vu.m_state.vf[ft][sel & 3u]);
+                    right[c] = normalizeVuOperand(vu.m_state.vf[ft][sel & 3u]);
                 else if constexpr (sel == 0x1cu || sel == 0x20u || sel == 0x21u || sel == 0x24u || sel == 0x25u)
-                    right = normalizeVuOperand(vu.m_state.q);
+                    right[c] = normalizeVuOperand(vu.m_state.q);
                 else if constexpr (sel == 0x1du || sel == 0x1eu || sel == 0x1fu || sel == 0x22u || sel == 0x23u || sel == 0x26u || sel == 0x27u)
-                    right = normalizeVuOperand(vu.m_state.i);
+                    right[c] = normalizeVuOperand(vu.m_state.i);
                 else
-                    right = normalizeVuOperand(vu.m_state.vf[ft][c]);
-                if constexpr (add) result[c] = left + right;
-                else if constexpr (sub) result[c] = left - right;
-                else if constexpr (mul) result[c] = left * right;
-                else if constexpr (madd) result[c] = vuMultiplyAdd(left, right, normalizeVuOperand(vu.m_state.acc[c]));
-                else if constexpr (msub) result[c] = vuMultiplyAdd(-left, right, normalizeVuOperand(vu.m_state.acc[c]));
-                else if constexpr (max) result[c] = left > right ? left : right;
-                else result[c] = left < right ? left : right;
+                    right[c] = normalizeVuOperand(vu.m_state.vf[ft][c]);
+                if constexpr (madd || msub)
+                    addend[c] = normalizeVuOperand(vu.m_state.acc[c]);
             }
-            if constexpr (!(max || min))
+            if constexpr (max || min)
             {
-                uint8_t flags[4]{};
-                for (uint32_t component = 0; component < 4u; ++component)
-                {
-                    if ((dest & (1u << (3u - component))) == 0u)
-                        continue;
-                    double fast = 0.0;
-                    long double exact = 0.0L;
-                    if (VUNativeAccess::exactFmacIn(vu, Instr, component, fast))
-                    {
-                        if (!VUNativeAccess::normalizeExactFast(result[component], fast, flags[component]))
-                        {
-                            VUNativeAccess::exactFmac(vu, Instr, component, exact);
-                            flags[component] = VUNativeAccess::normalizeExact(result[component], exact);
-                        }
-                    }
-                    else
-                    {
-                        uint32_t laneFlags = 0u;
-                        result[component] = vu.normalizeResult(result[component], laneFlags);
-                        flags[component] = static_cast<uint8_t>(laneFlags);
-                    }
-                }
-                vu.updateFmacFlags(flags, dest, VUNativeAccess::productSticky(vu, Instr, dest));
-            }
-            if constexpr (toAcc)
-                vu.applyDestAcc(result, dest);
-            else
+                float result[4];
+                for (uint32_t c = 0; c < 4u; ++c)
+                    result[c] = max ? VUKernels::maximum(left[c], right[c]) : VUKernels::minimum(left[c], right[c]);
                 vu.applyDest(vu.m_state.vf[fd], result, dest);
+            }
+            else
+            {
+                using VUKernels::FmacOp;
+                constexpr FmacOp kind = add ? FmacOp::Add : sub ? FmacOp::Sub : mul ? FmacOp::Mul
+                                                          : madd ? FmacOp::Madd : FmacOp::Msub;
+                const VUKernels::FmacLanes lanes = VUKernels::fmac<kind>(left, right, addend, dest);
+                vu.updateFmacFlags(lanes.flags, dest, lanes.productSticky);
+                if constexpr (toAcc)
+                    vu.applyDestAcc(lanes.value, dest);
+                else
+                    vu.applyDest(vu.m_state.vf[fd], lanes.value, dest);
+            }
         }
         else
             vu.execUpper(Instr);
