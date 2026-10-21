@@ -87,7 +87,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
     {
         float bc = broadcast(vt, op & 3);
         for (int c = 0; c < 4; c++)
-            result[c] = acc[c] + vs[c] * bc;
+            result[c] = std::fma(vs[c], bc, acc[c]);
         applyFmacDest(vd, result, dest);
         return;
     }
@@ -98,7 +98,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
     {
         float bc = broadcast(vt, op & 3);
         for (int c = 0; c < 4; c++)
-            result[c] = acc[c] - vs[c] * bc;
+            result[c] = std::fma(-vs[c], bc, acc[c]);
         applyFmacDest(vd, result, dest);
         return;
     }
@@ -162,7 +162,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
         return;
     case 0x21: // MADDq
         for (int c = 0; c < 4; c++)
-            result[c] = acc[c] + vs[c] * q;
+            result[c] = std::fma(vs[c], q, acc[c]);
         applyFmacDest(vd, result, dest);
         return;
     case 0x22: // ADDi
@@ -172,7 +172,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
         return;
     case 0x23: // MADDi
         for (int c = 0; c < 4; c++)
-            result[c] = acc[c] + vs[c] * i;
+            result[c] = std::fma(vs[c], i, acc[c]);
         applyFmacDest(vd, result, dest);
         return;
     case 0x24: // SUBq
@@ -182,7 +182,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
         return;
     case 0x25: // MSUBq
         for (int c = 0; c < 4; c++)
-            result[c] = acc[c] - vs[c] * q;
+            result[c] = std::fma(-vs[c], q, acc[c]);
         applyFmacDest(vd, result, dest);
         return;
     case 0x26: // SUBi
@@ -192,7 +192,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
         return;
     case 0x27: // MSUBi
         for (int c = 0; c < 4; c++)
-            result[c] = acc[c] - vs[c] * i;
+            result[c] = std::fma(-vs[c], i, acc[c]);
         applyFmacDest(vd, result, dest);
         return;
     case 0x28: // ADD
@@ -202,7 +202,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
         return;
     case 0x29: // MADD
         for (int c = 0; c < 4; c++)
-            result[c] = acc[c] + vs[c] * vt[c];
+            result[c] = std::fma(vs[c], vt[c], acc[c]);
         applyFmacDest(vd, result, dest);
         return;
     case 0x2A: // MUL
@@ -222,13 +222,13 @@ void VU1Interpreter::execUpper(uint32_t instr)
         return;
     case 0x2D: // MSUB
         for (int c = 0; c < 4; c++)
-            result[c] = acc[c] - vs[c] * vt[c];
+            result[c] = std::fma(-vs[c], vt[c], acc[c]);
         applyFmacDest(vd, result, dest);
         return;
     case 0x2E: // OPMSUB
-        result[0] = acc[0] - vs[1] * vt[2];
-        result[1] = acc[1] - vs[2] * vt[0];
-        result[2] = acc[2] - vs[0] * vt[1];
+        result[0] = std::fma(-vs[1], vt[2], acc[0]);
+        result[1] = std::fma(-vs[2], vt[0], acc[1]);
+        result[2] = std::fma(-vs[0], vt[1], acc[2]);
         result[3] = 0.0f;
         applyFmacDest(vd, result, dest);
         return;
@@ -281,7 +281,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
         {
             float bc = broadcast(vt, specialOp & 3);
             for (int c = 0; c < 4; c++)
-                result[c] = acc[c] + vs[c] * bc;
+                result[c] = std::fma(vs[c], bc, acc[c]);
             applyFmacDestAcc(result, dest);
             return;
         }
@@ -292,7 +292,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
         {
             float bc = broadcast(vt, specialOp & 3);
             for (int c = 0; c < 4; c++)
-                result[c] = acc[c] - vs[c] * bc;
+                result[c] = std::fma(-vs[c], bc, acc[c]);
             applyFmacDestAcc(result, dest);
             return;
         }
@@ -429,7 +429,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
             return;
         case 0x21: // MADDAq
             for (int c = 0; c < 4; c++)
-                result[c] = acc[c] + vs[c] * q;
+                result[c] = std::fma(vs[c], q, acc[c]);
             applyFmacDestAcc(result, dest);
             return;
         case 0x22: // ADDAi
@@ -439,7 +439,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
             return;
         case 0x23: // MADDAi
             for (int c = 0; c < 4; c++)
-                result[c] = acc[c] + vs[c] * i;
+                result[c] = std::fma(vs[c], i, acc[c]);
             applyFmacDestAcc(result, dest);
             return;
         case 0x24: // SUBAq
@@ -449,7 +449,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
             return;
         case 0x25: // MSUBAq
             for (int c = 0; c < 4; c++)
-                result[c] = acc[c] - vs[c] * q;
+                result[c] = std::fma(-vs[c], q, acc[c]);
             applyFmacDestAcc(result, dest);
             return;
         case 0x26: // SUBAi
@@ -459,7 +459,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
             return;
         case 0x27: // MSUBAi
             for (int c = 0; c < 4; c++)
-                result[c] = acc[c] - vs[c] * i;
+                result[c] = std::fma(-vs[c], i, acc[c]);
             applyFmacDestAcc(result, dest);
             return;
         case 0x28: // ADDA
@@ -469,7 +469,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
             return;
         case 0x29: // MADDA
             for (int c = 0; c < 4; c++)
-                result[c] = acc[c] + vs[c] * vt[c];
+                result[c] = std::fma(vs[c], vt[c], acc[c]);
             applyFmacDestAcc(result, dest);
             return;
         case 0x2A: // MULA
@@ -484,7 +484,7 @@ void VU1Interpreter::execUpper(uint32_t instr)
             return;
         case 0x2D: // MSUBA
             for (int c = 0; c < 4; c++)
-                result[c] = acc[c] - vs[c] * vt[c];
+                result[c] = std::fma(-vs[c], vt[c], acc[c]);
             applyFmacDestAcc(result, dest);
             return;
         case 0x2E: // OPMULA

@@ -396,6 +396,19 @@ add_library(ps2_runtime STATIC
     src/lib/games_database.cpp
 )
 
+# O modelo VU escreve cada multiply-add fundido como std::fma; sem contração, o valor não
+# depende do compilador. O MSVC só contrai com /fp:contract.
+if(MSVC)
+    set(PS2X_VU_FP_FLAGS "")
+else()
+    set(PS2X_VU_FP_FLAGS -ffp-contract=off)
+endif()
+set_source_files_properties(
+    src/lib/vu/ps2_vu1_core.cpp
+    src/lib/vu/ps2_vu1_upper.cpp
+    src/lib/vu/ps2_vu1_lower.cpp
+    PROPERTIES COMPILE_OPTIONS "${PS2X_VU_FP_FLAGS}")
+
 if(PS2X_ENABLE_RUNTIME_LOGS)
     target_compile_definitions(ps2_runtime PUBLIC
         PS2_RUNTIME_LOGS=1
@@ -471,7 +484,8 @@ if(PS2X_VU_NATIVE_DIR)
     endif()
     target_sources(ps2EntryRunner PRIVATE ${VU_NATIVE_SRC_FILES})
     target_include_directories(ps2EntryRunner PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/lib/vu")
-    set_source_files_properties(${VU_NATIVE_SRC_FILES} PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
+    set_source_files_properties(${VU_NATIVE_SRC_FILES} PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
+        COMPILE_OPTIONS "${PS2X_VU_FP_FLAGS}")
 endif()
 
 if(PS2X_ENABLE_RUNNER_UNITY_BUILD)

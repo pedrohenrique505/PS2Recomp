@@ -10,6 +10,12 @@
 
 namespace
 {
+    // A ordem em que o GCC contraía x*x + y*y + z*z: só y*y é arredondado à parte.
+    float vuSumOfSquares(float x, float y, float z)
+    {
+        return std::fma(z, z, std::fma(x, x, y * y));
+    }
+
     float vuEatan(float value)
     {
         constexpr float coefficients[] = {
@@ -26,8 +32,8 @@ namespace
         const float squared = value * value;
         float polynomial = coefficients[7];
         for (int index = 6; index >= 0; --index)
-            polynomial = coefficients[index] + squared * polynomial;
-        return quarterPi + value * polynomial;
+            polynomial = std::fma(squared, polynomial, coefficients[index]);
+        return std::fma(value, polynomial, quarterPi);
     }
 
     float vuEsin(float value)
@@ -42,7 +48,7 @@ namespace
         const float squared = value * value;
         float polynomial = coefficients[4];
         for (int index = 3; index >= 0; --index)
-            polynomial = coefficients[index] + squared * polynomial;
+            polynomial = std::fma(squared, polynomial, coefficients[index]);
         return value * polynomial;
     }
 
@@ -58,8 +64,8 @@ namespace
 
         float polynomial = coefficients[5];
         for (int index = 4; index >= 0; --index)
-            polynomial = coefficients[index] + value * polynomial;
-        polynomial = 1.0f + value * polynomial;
+            polynomial = std::fma(value, polynomial, coefficients[index]);
+        polynomial = std::fma(value, polynomial, 1.0f);
         polynomial *= polynomial;
         polynomial *= polynomial;
         return polynomial != 0.0f ? 1.0f / polynomial : std::numeric_limits<float>::max();
@@ -672,7 +678,7 @@ void VU1Interpreter::execLower(uint32_t instr, uint8_t *vuData, uint32_t dataSiz
                 const float x = normalizeOperand(m_state.vf[vfS][0]);
                 const float y = normalizeOperand(m_state.vf[vfS][1]);
                 const float z = normalizeOperand(m_state.vf[vfS][2]);
-                queueP(x * x + y * y + z * z, 11u);
+                queueP(vuSumOfSquares(x, y, z), 11u);
                 return;
             }
             case 0x71: // ERSADD
@@ -680,7 +686,7 @@ void VU1Interpreter::execLower(uint32_t instr, uint8_t *vuData, uint32_t dataSiz
                 const float x = normalizeOperand(m_state.vf[vfS][0]);
                 const float y = normalizeOperand(m_state.vf[vfS][1]);
                 const float z = normalizeOperand(m_state.vf[vfS][2]);
-                const float sum = x * x + y * y + z * z;
+                const float sum = vuSumOfSquares(x, y, z);
                 queueP(sum != 0.0f ? 1.0f / sum : sum, 18u);
                 return;
             }
@@ -689,7 +695,7 @@ void VU1Interpreter::execLower(uint32_t instr, uint8_t *vuData, uint32_t dataSiz
                 const float x = normalizeOperand(m_state.vf[vfS][0]);
                 const float y = normalizeOperand(m_state.vf[vfS][1]);
                 const float z = normalizeOperand(m_state.vf[vfS][2]);
-                queueP(std::sqrt(x * x + y * y + z * z), 18u);
+                queueP(std::sqrt(vuSumOfSquares(x, y, z)), 18u);
                 return;
             }
             case 0x73: // ERLENG
@@ -697,7 +703,7 @@ void VU1Interpreter::execLower(uint32_t instr, uint8_t *vuData, uint32_t dataSiz
                 const float x = normalizeOperand(m_state.vf[vfS][0]);
                 const float y = normalizeOperand(m_state.vf[vfS][1]);
                 const float z = normalizeOperand(m_state.vf[vfS][2]);
-                const float len = std::sqrt(x * x + y * y + z * z);
+                const float len = std::sqrt(vuSumOfSquares(x, y, z));
                 queueP(len != 0.0f ? 1.0f / len : len, 24u);
                 return;
             }

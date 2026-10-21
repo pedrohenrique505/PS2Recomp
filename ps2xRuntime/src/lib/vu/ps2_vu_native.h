@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cmath>
 #include <limits>
+#include <type_traits>
 
 // Interface interna dos blocos AOT. Código gerado continua fora do runtime versionado.
 using VUNativeRunner = bool (*)(VU1Interpreter &, uint32_t, uint8_t *, uint32_t,
@@ -160,6 +161,18 @@ struct VUNativeAccess
         return exactFmacIn(vu, upper, component, result);
     }
 
+    // left * right + addend com um só arredondamento. Com operandos float o produto é exato em
+    // double e long double, então fundir não muda o valor; o x87 não tem FMA e std::fma em
+    // long double viraria uma chamada a fmal.
+    template <typename Real>
+    static inline Real vuMultiplyAdd(Real left, Real right, Real addend)
+    {
+        if constexpr (std::is_same_v<Real, long double>)
+            return addend + left * right;
+        else
+            return std::fma(left, right, addend);
+    }
+
     // A mesma fórmula em outra precisão. Em double o produto de dois floats é exato e a
     // soma arredondada preserva sinal e zero; normalizeExactFast usa isso para classificar.
     template <typename Real>
@@ -203,9 +216,9 @@ struct VUNativeAccess
             else if (op <= 0x07u)
                 result = vs(component) - vt(op & 3u);
             else if (op <= 0x0Bu)
-                result = acc(component) + vs(component) * vt(op & 3u);
+                result = vuMultiplyAdd(vs(component), vt(op & 3u), acc(component));
             else if (op <= 0x0Fu)
-                result = acc(component) - vs(component) * vt(op & 3u);
+                result = vuMultiplyAdd(-vs(component), vt(op & 3u), acc(component));
             else if (op >= 0x18u && op <= 0x1Bu)
                 result = vs(component) * vt(op & 3u);
             else
@@ -222,31 +235,31 @@ struct VUNativeAccess
                     result = vs(component) + q;
                     break;
                 case 0x21u:
-                    result = acc(component) + vs(component) * q;
+                    result = vuMultiplyAdd(vs(component), q, acc(component));
                     break;
                 case 0x22u:
                     result = vs(component) + i;
                     break;
                 case 0x23u:
-                    result = acc(component) + vs(component) * i;
+                    result = vuMultiplyAdd(vs(component), i, acc(component));
                     break;
                 case 0x24u:
                     result = vs(component) - q;
                     break;
                 case 0x25u:
-                    result = acc(component) - vs(component) * q;
+                    result = vuMultiplyAdd(-vs(component), q, acc(component));
                     break;
                 case 0x26u:
                     result = vs(component) - i;
                     break;
                 case 0x27u:
-                    result = acc(component) - vs(component) * i;
+                    result = vuMultiplyAdd(-vs(component), i, acc(component));
                     break;
                 case 0x28u:
                     result = vs(component) + vt(component);
                     break;
                 case 0x29u:
-                    result = acc(component) + vs(component) * vt(component);
+                    result = vuMultiplyAdd(vs(component), vt(component), acc(component));
                     break;
                 case 0x2Au:
                     result = vs(component) * vt(component);
@@ -255,7 +268,7 @@ struct VUNativeAccess
                     result = vs(component) - vt(component);
                     break;
                 case 0x2Du:
-                    result = acc(component) - vs(component) * vt(component);
+                    result = vuMultiplyAdd(-vs(component), vt(component), acc(component));
                     break;
                 case 0x2Eu:
                 {
@@ -263,7 +276,7 @@ struct VUNativeAccess
                     static constexpr uint8_t right[4] = {2u, 0u, 1u, 3u};
                     result = component == 3u
                                  ? Real(0)
-                                 : acc(component) - vs(left[component]) * vt(right[component]);
+                                 : vuMultiplyAdd(-vs(left[component]), vt(right[component]), acc(component));
                     break;
                 }
                 default:
@@ -278,9 +291,9 @@ struct VUNativeAccess
         else if (special <= 0x07u)
             result = vs(component) - vt(special & 3u);
         else if (special <= 0x0Bu)
-            result = acc(component) + vs(component) * vt(special & 3u);
+            result = vuMultiplyAdd(vs(component), vt(special & 3u), acc(component));
         else if (special <= 0x0Fu)
-            result = acc(component) - vs(component) * vt(special & 3u);
+            result = vuMultiplyAdd(-vs(component), vt(special & 3u), acc(component));
         else if (special >= 0x18u && special <= 0x1Bu)
             result = vs(component) * vt(special & 3u);
         else
@@ -297,31 +310,31 @@ struct VUNativeAccess
                 result = vs(component) + q;
                 break;
             case 0x21u:
-                result = acc(component) + vs(component) * q;
+                result = vuMultiplyAdd(vs(component), q, acc(component));
                 break;
             case 0x22u:
                 result = vs(component) + i;
                 break;
             case 0x23u:
-                result = acc(component) + vs(component) * i;
+                result = vuMultiplyAdd(vs(component), i, acc(component));
                 break;
             case 0x24u:
                 result = vs(component) - q;
                 break;
             case 0x25u:
-                result = acc(component) - vs(component) * q;
+                result = vuMultiplyAdd(-vs(component), q, acc(component));
                 break;
             case 0x26u:
                 result = vs(component) - i;
                 break;
             case 0x27u:
-                result = acc(component) - vs(component) * i;
+                result = vuMultiplyAdd(-vs(component), i, acc(component));
                 break;
             case 0x28u:
                 result = vs(component) + vt(component);
                 break;
             case 0x29u:
-                result = acc(component) + vs(component) * vt(component);
+                result = vuMultiplyAdd(vs(component), vt(component), acc(component));
                 break;
             case 0x2Au:
                 result = vs(component) * vt(component);
@@ -330,7 +343,7 @@ struct VUNativeAccess
                 result = vs(component) - vt(component);
                 break;
             case 0x2Du:
-                result = acc(component) - vs(component) * vt(component);
+                result = vuMultiplyAdd(-vs(component), vt(component), acc(component));
                 break;
             case 0x2Eu:
             {
@@ -706,8 +719,8 @@ struct VUNativeAccess::NativeUpper
                 if constexpr (add) result[c] = left + right;
                 else if constexpr (sub) result[c] = left - right;
                 else if constexpr (mul) result[c] = left * right;
-                else if constexpr (madd) result[c] = normalizeVuOperand(vu.m_state.acc[c]) + left * right;
-                else if constexpr (msub) result[c] = normalizeVuOperand(vu.m_state.acc[c]) - left * right;
+                else if constexpr (madd) result[c] = vuMultiplyAdd(left, right, normalizeVuOperand(vu.m_state.acc[c]));
+                else if constexpr (msub) result[c] = vuMultiplyAdd(-left, right, normalizeVuOperand(vu.m_state.acc[c]));
                 else if constexpr (max) result[c] = left > right ? left : right;
                 else result[c] = left < right ? left : right;
             }
